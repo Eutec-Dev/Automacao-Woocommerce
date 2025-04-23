@@ -1,0 +1,34 @@
+# Ambientes virtuais
+venv/
+.env/
+
+# Caches do Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Jupyter Notebooks checkpoint
+.ipynb_checkpoints/
+
+# Arquivos temporários
+*.log
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
+
+# Arquivos do VS Code
+.vscode/
+
+# Configurações de SO
+*.sublime-project
+*.sublime-workspace
+
+# Armazenamento local de tokens/API keys (se houver)
+secrets.json
+config.ini
+*.env
+
+# Dependências do GitHub Codespaces (caso use futuramente)
+.devcontainer/

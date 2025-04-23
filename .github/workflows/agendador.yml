@@ -1,0 +1,29 @@
+name: Rodar script agendado
+
+on:
+  schedule:
+    - cron: '0 10 * * *'  # 07:00 BR
+    - cron: '0 14 * * *'  # 11:00 BR
+    - cron: '0 18 * * *'  # 15:00 BR
+    - cron: '0 22 * * *'  # 19:00 BR
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar o repositório
+        uses: actions/checkout@v3
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependências (se houver)
+        run: |
+          pip install -r requirements.txt || true
+
+      - name: Rodar o script
+        run: |
+          python automacao.py
