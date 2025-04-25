@@ -1,9 +1,11 @@
+# --------------------------- IMPORTAÇÃO DE BIBLIOTECAS NECESSÁRIAS ---------------------------
 import requests # pip install requests
 import pandas as pd # pip install pandas
 from woocommerce import API # pip install woocommerce
 
-# ----------------------------------------------------------------------------------------- GLOBAL
+# --------------------------- CONFIGURAÇÕES GERAIS E INICIAIS ---------------------------
 
+# Configuração para exibir todos os dados no console, útil para debug
 pd.set_option('display.max_rows', None)  # Exibe todas as linhas
 pd.set_option('display.max_columns', None)  # Exibe todas as colunas
 
@@ -16,8 +18,9 @@ wcapi = API(
     timeout=10  # Tempo limite da requisição
 )
 
-API_URL = "https://vendas.agis.com.br/rest/all/V1/agis/reseller/product/list" # PRODUÇÃO
-TOKEN = "1cnl71wepg3cqhu3t2nys2jgkks68yng" 
+# Dados da API da Agis
+API_URL = "https://vendas.agis.com.br/rest/all/V1/agis/reseller/product/list"  # PRODUÇÃO
+TOKEN = "1cnl71wepg3cqhu3t2nys2jgkks68yng"  # Token de autenticação da API
 HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {TOKEN}"
@@ -27,10 +30,9 @@ PARAMS = {
     "searchCriteria[pageSize]": 1000    
 }
 
-# ----------------------------------------------------------------------------------------- GLOBAL
+# --------------------------- FUNÇÕES PARA O WOOCOMMERCE ---------------------------
 
-# ----------------------------------------------------------------------------------------- WOOCOMMERCE
-
+# Função para listar todos os produtos do WooCommerce
 def listar_produtos():
     lista_produtos = []
     pagina = 1  # Começa da página 1
@@ -43,7 +45,7 @@ def listar_produtos():
             produtos = response.json()
             
             if not produtos:
-                break
+                break  # Sai do loop se não houver mais produtos
 
             # Adicionar os produtos à lista
             for produto in produtos:
@@ -118,10 +120,10 @@ def buscar_produto(produto_id):
         print(f"Produto encontrado: {produto['name']} - Preço: {produto['price']}")
     else:
         print("Produto não encontrado.")
-#---------------------------------------------------------------------------------- WOOCOMMERCE
 
-#---------------------------------------------------------------------------------- AGIS
+# --------------------------- FUNÇÕES PARA A API DA AGIS ---------------------------
 
+# Busca os produtos da Agis via API
 def fetch_products(api_url, headers, params):
     
     try:
@@ -137,7 +139,7 @@ def fetch_products(api_url, headers, params):
         print(f"Erro ao conectar à API: {str(e)}")
         return None
 
-
+# Transforma os dados da API da Agis em tabela (DataFrame)
 def transform_to_table(data):
   
     warehouse = 0
@@ -167,13 +169,10 @@ def transform_to_table(data):
             if(warehouse_2 == 7):    
                 warehouse = warehouse_2
                 qty = qty_2
-                
-            # if(warehouse_3 == 7):    
-            #     warehouse = warehouse_3
-            #     qty = qty_3
-            
+
+            # Reajuste de preço (caso acima de R$487, aplicar taxa de 4%)
             if(price > 487):
-                price = price/0.96  # 4% ORIGINAL
+                price = price/0.96  
                 
             else:
                 price = 0   
@@ -193,7 +192,8 @@ def transform_to_table(data):
     else:
         print("Nenhum dado encontrado.")
         return pd.DataFrame()
-#---------------------------------------------------------------------------------- AGIS
+
+# --------------------------- ROTINA PRINCIPAL (EXECUÇÃO) ---------------------------
 
 if __name__ == "__main__":
     
@@ -202,9 +202,9 @@ if __name__ == "__main__":
     tabela2 = transform_to_table(products_data)
     
     df = listar_produtos()
-    tabela_final = df.merge(tabela2, on="SKU", how="inner")  
+    tabela_final = df.merge(tabela2, on="SKU", how="inner")  # Faz merge com a tabela da Agis
     
-    # Editar os produtos no WordPress
+    # Atualiza todos os produtos com novos preços e estoques
     while i < len(tabela_final):
         atualizar_produto(str(tabela_final.iloc[i,0]), float(tabela_final.iloc[i,6]), int(tabela_final.iloc[i,5]))
         i = i+1
