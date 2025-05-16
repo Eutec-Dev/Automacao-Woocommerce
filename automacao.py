@@ -49,8 +49,6 @@ def listar_produtos():
 
             # Adicionar os produtos à lista
             for produto in produtos:
-                if produto.get("manage_stock", False):
-
                 id_produto = produto.get("sku", "Sem SKU")
                 preco = produto.get("price", "Sem Preço")
                 estoque = produto.get("stock_quantity", "Sem Estoque")
