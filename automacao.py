@@ -49,6 +49,7 @@ def listar_produtos():
 
             # Adicionar os produtos à lista
             for produto in produtos:
+                if produto.get("manage_stock", False): # Filtra apenas os produtos gerenciados
                 id_produto = produto.get("sku", "Sem SKU")
                 preco = produto.get("price", "Sem Preço")
                 estoque = produto.get("stock_quantity", "Sem Estoque")
@@ -171,27 +172,21 @@ def transform_to_table(data):
                 qty = qty_2
 
             # Reajuste de preço (caso acima de R$400, aplicar taxa de 20%)
-            if(price > 400):
-                price = price/0.80 
-                
-            else:
-                price = 0   
-            
-            
+            if price > 0:
+                price = round(price / 0.80, 2)
+
             products.append({
                 "SKU": sku,
                 "NOME": name,
                 "WAREHOUSE": warehouse,
                 "QUANTIDADE": qty,
-                "PRECO": price
+                "PRECO": price,
             })
-        
-        df = pd.DataFrame(products)
-        
-        return df
-    else:
-        print("Nenhum dado encontrado.")
-        return pd.DataFrame()
+
+        return pd.DataFrame(products)
+
+    print("Nenhum dado encontrado.")
+    return pd.DataFrame()
 
 # --------------------------- ROTINA PRINCIPAL (EXECUÇÃO) ---------------------------
 
