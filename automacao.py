@@ -191,16 +191,19 @@ def transform_to_table(data):
 # --------------------------- ROTINA PRINCIPAL (EXECUÇÃO) ---------------------------
 
 if __name__ == "__main__":
-    
-    i = 0
+    # Busca apenas produtos com 'Gerenciar Estoque' ativado
+    df_woo = listar_produtos_gerenciados()
+
+    # Busca os dados da Agis
     products_data = fetch_products(API_URL, HEADERS, PARAMS)
-    tabela2 = transform_to_table(products_data)
-    
-    df = listar_produtos()
-    tabela_final = df.merge(tabela2, on="SKU", how="inner")  # Faz merge com a tabela da Agis
-    
-    # Atualiza todos os produtos com novos preços e estoques
-    while i < len(tabela_final):
-        atualizar_produto(str(tabela_final.iloc[i,0]), float(tabela_final.iloc[i,6]), int(tabela_final.iloc[i,5]))
-        i = i+1
+    df_agis = transform_to_table(products_data)
+
+    # Faz merge apenas dos SKU existentes nos dois sistemas
+    tabela_final = df_woo.merge(df_agis, on="SKU", how="inner")
+
+    # Atualiza os produtos no WooCommerce conforme os dados da Agis
+    for _, row in tabela_final.iterrows():
+        atualizar_produto(str(row["SKU"]), float(row["PRECO"]), int(row["QUANTIDADE"]))
+
+    print("✅ Atualização concluída!")
     
