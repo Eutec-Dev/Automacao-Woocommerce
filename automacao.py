@@ -12,8 +12,8 @@ pd.set_option('display.max_columns', None)  # Exibe todas as colunas
 # Configurações da API do WooCommerce
 wcapi = API(
     url="https://eutec.com.br",  # URL do seu site WordPress
-    consumer_key="ck_ac458c69e6258426b754930b11ce4e7f15d352d1",  # Sua Consumer Key
-    consumer_secret="cs_57a058d6ef526b1659df34d156f3da92685cd96e",  # Sua Consumer Secret
+    consumer_key="ck_1fc85717350736c7769d86de5690e839faf1a2f3",  # Sua Consumer Key
+    consumer_secret="cs_9dac5695d1f7d1f3320021a0afec3120cea4309f",  # Sua Consumer Secret
     version="wc/v3",  # Versão da API do WooCommerce
     timeout=10  # Tempo limite da requisição
 )
@@ -49,11 +49,12 @@ def listar_produtos():
 
             # Adicionar os produtos à lista
             for produto in produtos:
-                if produto.get("manage_stock", False): # Filtra apenas os produtos gerenciados
-                    id_produto = produto.get("sku", "Sem SKU")
-                    preco = produto.get("price", "Sem Preço")
-                    estoque = produto.get("stock_quantity", "Sem Estoque")
-                    lista_produtos.append([id_produto, preco, estoque])
+                if produto.get("manage_stock", False):
+                id_produto = produto.get("sku", "Sem SKU")
+                preco = produto.get("price", "Sem Preço")
+                estoque = produto.get("stock_quantity", "Sem Estoque")
+                
+                lista_produtos.append([id_produto, preco, estoque])
            
             pagina += 1  
         
@@ -69,27 +70,69 @@ def listar_produtos():
     
     return df
 
+# Criar um NOVO produto
+def criar_produto(nome, preco, estoque):
+    dados = {
+        "name": nome,
+        "regular_price": str(preco),
+        "stock_quantity": estoque,
+        "type": "simple",  # Produto simples
+        "status": "publish"  # Publicar automaticamente
+    }
+    response = wcapi.post("products", dados)
+    print("Produto Criado:", response.json())
+
+# ----------------------------------------------------------------------
+def obter_id_por_sku(sku):
+    """Busca o ID do produto no WooCommerce com base no SKU"""
+    response = wcapi.get(f"products", params={"sku": sku})
+    
+    if response.status_code == 200 and response.json():
+        produto = response.json()[0]  
+        return produto["id"]  
+    else:
+        print(f"Produto com SKU '{sku}' não encontrado!")
+        return None  
+    
+    # ----------------------------------------------------------------------
+
 # Atualizar um produto EXISTENTE
 def atualizar_produto(sku, novo_preco, novo_estoque):
+    
     produto_id = obter_id_por_sku(sku)
     dados = {
         "regular_price": str(novo_preco),
-        "stock_quantity": novo_estoque,  # Substitui o estoque sem somar!
-        "manage_stock": True  # Garante que WooCommerce reconheça a gestão de estoque
+        "stock_quantity": novo_estoque
     }
     response = wcapi.put(f"products/{produto_id}", dados)
     response.encoding = 'utf-8'
     print("Produto Atualizado:", response.text.encode('utf-8', 'ignore').decode('utf-8'))
 
+# Deletar um produto
+def deletar_produto(produto_id):
+    response = wcapi.delete(f"products/{produto_id}", params={"force": True})
+    print("Produto Deletado:", response.json())
+
+# Buscar um único produto pelo ID
+def buscar_produto(produto_id):
+    response = wcapi.get(f"products/{produto_id}")
+    if response.status_code == 200:
+        produto = response.json()
+        print(f"Produto encontrado: {produto['name']} - Preço: {produto['price']}")
+    else:
+        print("Produto não encontrado.")
+
 # --------------------------- FUNÇÕES PARA A API DA AGIS ---------------------------
 
 # Busca os produtos da Agis via API
 def fetch_products(api_url, headers, params):
+    
     try:
         response = requests.get(api_url, headers=headers, params=params)
         
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            return data
         else:
             print(f"Erro {response.status_code}: {response.text}")
             return None
@@ -99,51 +142,71 @@ def fetch_products(api_url, headers, params):
 
 # Transforma os dados da API da Agis em tabela (DataFrame)
 def transform_to_table(data):
+  
+    warehouse = 0
+    qty = 0
+    
     if data and "items" in data:
+        
         products = []
+
         for product in data["items"]:
+            
             sku = product.get("sku", "N/A")
             name = product.get("name", "N/A")
             stock = product.get("stock", [])
+            warehouse_1 = int(stock[0].get("warehouse", "N/A"))
+            warehouse_2 = int(stock[1].get("warehouse", "N/A"))
+            #warehouse_3 = int(stock[2].get("warehouse", "N/A"))
+            qty_1 = stock[0].get("qty", "N/A")
+            qty_2 = stock[1].get("qty", "N/A")
+            #qty_3 = stock[2].get("qty", "N/A")
+            price = stock[0].get("price", "N/A")
+            
+            if(warehouse_1 == 7):    
+                warehouse = warehouse_1
+                qty = qty_1
+                
+            if(warehouse_2 == 7):    
+                warehouse = warehouse_2
+                qty = qty_2
 
-            # Soma os estoques dos dois armazéns
-            qty_1 = stock[0].get("qty", 0)
-            qty_2 = stock[1].get("qty", 0)
-            total_qty = qty_1 + qty_2
-
-            price = stock[0].get("price", 0)
-
-            # Aplicar taxa de 20% no preço
-            if price > 0:
-                price = round(price / 0.80, 2)
-
+            # Reajuste de preço (caso acima de R$487, aplicar taxa de 4%)
+            if(price > 400):
+                price = price/0.80 
+                
+            else:
+                price = 0   
+            
+            
             products.append({
                 "SKU": sku,
                 "NOME": name,
-                "QUANTIDADE": total_qty,  # Soma estoque dos dois armazéns
-                "PRECO": price,
+                "WAREHOUSE": warehouse,
+                "QUANTIDADE": qty,
+                "PRECO": price
             })
-
-        return pd.DataFrame(products)
-
-    print("Nenhum dado encontrado.")
-    return pd.DataFrame()
+        
+        df = pd.DataFrame(products)
+        
+        return df
+    else:
+        print("Nenhum dado encontrado.")
+        return pd.DataFrame()
 
 # --------------------------- ROTINA PRINCIPAL (EXECUÇÃO) ---------------------------
 
 if __name__ == "__main__":
-    # Busca apenas produtos com 'Gerenciar Estoque' ativado
-    df_woo = listar_produtos()
-
-    # Busca os dados da Agis
+    
+    i = 0
     products_data = fetch_products(API_URL, HEADERS, PARAMS)
-    df_agis = transform_to_table(products_data)
-
-    # Faz merge apenas dos SKU existentes nos dois sistemas
-    tabela_final = df_woo.merge(df_agis, on="SKU", how="inner")
-
-    # Atualiza os produtos no WooCommerce conforme os dados da Agis
-    for _, row in tabela_final.iterrows():
-        atualizar_produto(str(row["SKU"]), float(row["PRECO"]), int(row["QUANTIDADE"]))
-
-    print("✅ Atualização concluída!")
+    tabela2 = transform_to_table(products_data)
+    
+    df = listar_produtos()
+    tabela_final = df.merge(tabela2, on="SKU", how="inner")  # Faz merge com a tabela da Agis
+    
+    # Atualiza todos os produtos com novos preços e estoques
+    while i < len(tabela_final):
+        atualizar_produto(str(tabela_final.iloc[i,0]), float(tabela_final.iloc[i,6]), int(tabela_final.iloc[i,5]))
+        i = i+1
+    
