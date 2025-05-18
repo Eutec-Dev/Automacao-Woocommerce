@@ -60,6 +60,11 @@ def listar_produtos_woocommerce():
     df = pd.DataFrame(produtos)
     df = df[df["Preco"] != "0.00"]
     df.dropna(subset=["Estoque"], inplace=True)
+    
+    # Garantindo que a coluna SKU está formatada corretamente
+    df.columns = df.columns.str.strip()
+    df["SKU"] = df["SKU"].astype(str)
+    
     return df
 
 
@@ -141,7 +146,13 @@ def transform_to_table(data):
                 "PRECO": preco_final
             })
 
-    return pd.DataFrame(produtos)
+    df = pd.DataFrame(produtos)
+    
+    # Garantindo que a coluna SKU está formatada corretamente
+    df.columns = df.columns.str.strip()
+    df["SKU"] = df["SKU"].astype(str)
+    
+    return df
 
 
 # --------------------------- ROTINA PRINCIPAL ---------------------------
@@ -150,6 +161,14 @@ if __name__ == "__main__":
     produtos_agis_raw = fetch_produtos_agis()
     tabela_agis = transform_to_table(produtos_agis_raw)
     tabela_wc = listar_produtos_woocommerce()
+
+    # Verifique as colunas antes do merge
+    print("Colunas tabela_wc:", tabela_wc.columns)
+    print("Colunas tabela_agis:", tabela_agis.columns)
+
+    # Renomear coluna se necessário
+    if "sku" in tabela_agis.columns:
+        tabela_agis.rename(columns={"sku": "SKU"}, inplace=True)
 
     tabela_final = pd.merge(tabela_wc, tabela_agis, on="SKU", how="inner")
 
