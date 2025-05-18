@@ -12,8 +12,8 @@ pd.set_option('display.max_columns', None)  # Exibe todas as colunas
 # Configurações da API do WooCommerce
 wcapi = API(
     url="https://eutec.com.br",  # URL do seu site WordPress
-    consumer_key="ck_1fc85717350736c7769d86de5690e839faf1a2f3",  # Sua Consumer Key
-    consumer_secret="cs_9dac5695d1f7d1f3320021a0afec3120cea4309f",  # Sua Consumer Secret
+    consumer_key="ck_794d7295844200c45982c6a6d89c5b769d1593ed",  # Sua Consumer Key
+    consumer_secret="cs_db2331ce6e2104765bb0bbe9053d25104d9d78ef",  # Sua Consumer Secret
     version="wc/v3",  # Versão da API do WooCommerce
     timeout=10  # Tempo limite da requisição
 )
