@@ -170,7 +170,7 @@ def transform_to_table(data):
                 warehouse = warehouse_2
                 qty = qty_2
 
-            # Reajuste de preço (caso acima de R$487, aplicar taxa de 4%)
+            # Reajuste de preço (caso acima de R$400, aplicar taxa de 20%)
             if(price > 400):
                 price = price/0.80  
                 
