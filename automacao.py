@@ -171,8 +171,8 @@ def transform_to_table(data):
                 qty = qty_2
 
             # Reajuste de preço (caso acima de R$487, aplicar taxa de 4%)
-            if(price > 487):
-                price = price/0.96  
+            if(price > 400):
+                price = price/0.80  
                 
             else:
                 price = 0   
