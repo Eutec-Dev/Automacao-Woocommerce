@@ -23,12 +23,51 @@ HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {os.getenv('1cnl71wepg3cqhu3t2nys2jgkks68yng')}"
 }
-PARAMS = {
-    "searchCriteria[currentPage]": 1,
-    "searchCriteria[pageSize]": 1000
-}
 
 # --------------------------- FUNÇÕES ---------------------------
+
+def fetch_all_products_agis():
+    """Busca todos os produtos da API Agis com paginação automática."""
+    produtos = []
+    pagina = 1
+    page_size = 1000
+
+    while True:
+        params = {
+            "searchCriteria[currentPage]": pagina,
+            "searchCriteria[pageSize]": page_size
+        }
+
+        try:
+            response = requests.get(API_URL, headers=HEADERS, params=params)
+
+            # Verificação da resposta da API antes de processar
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            data = response.json()
+
+            # Se a resposta for válida, processamos os produtos
+            if "items" in data and data["items"]:
+                produtos.extend(data["items"])
+                print(f"✅ Página {pagina} processada com {len(data['items'])} produtos.")
+
+                # Verifica se há mais páginas para buscar
+                if len(data["items"]) < page_size:
+                    break  # Última página
+                else:
+                    pagina += 1
+            else:
+                print(f"🚨 Nenhum produto retornado na página {pagina}.")
+                break
+
+        except requests.exceptions.RequestException as e:
+            print(f"Erro ao conectar à API Agis: {e}")
+            break
+
+    return pd.DataFrame(produtos)
+
 
 def listar_produtos_woocommerce():
     """Lista produtos publicados com gerenciamento de estoque ativo."""
@@ -38,7 +77,6 @@ def listar_produtos_woocommerce():
     while True:
         response = wcapi.get("products", params={"per_page": 100, "page": pagina})
 
-        # Verificando status antes de processar a resposta
         if response.status_code != 200:
             print(f"Erro ao buscar produtos ({response.status_code}): {response.text}")
             return pd.DataFrame()
@@ -75,135 +113,50 @@ def listar_produtos_woocommerce():
 
     df.columns = df.columns.str.strip()
     df["SKU"] = df["SKU"].astype(str)
-    
+
     return df
-
-
-def obter_id_por_sku(sku):
-    """Retorna o ID do produto pelo SKU."""
-    response = wcapi.get("products", params={"sku": sku})
-    if response.status_code == 200 and response.json():
-        return response.json()[0]["id"]
-    return None
 
 
 def atualizar_produto(sku, novo_preco, novo_estoque):
     """Atualiza preço e estoque do produto via SKU."""
-    produto_id = obter_id_por_sku(sku)
-    if produto_id is None:
-        print(f"Produto com SKU '{sku}' não encontrado.")
-        return
+    response = wcapi.get("products", params={"sku": sku})
 
-    dados = {
-        "regular_price": str(round(novo_preco, 2)),
-        "stock_quantity": int(novo_estoque)
-    }
+    if response.status_code == 200 and response.json():
+        produto_id = response.json()[0]["id"]
 
-    response = wcapi.put(f"products/{produto_id}", dados)
-    if response.status_code == 200:
-        print(f"✅ Atualizado: SKU {sku} | Preço R${novo_preco} | Estoque {novo_estoque}")
-    else:
-        print(f"❌ Erro ao atualizar SKU {sku}: {response.text}")
+        dados = {
+            "regular_price": str(round(novo_preco, 2)),
+            "stock_quantity": int(novo_estoque)
+        }
 
-
-def fetch_produtos_agis():
-    """Busca os dados da API da Agis com validação e tratamento de erros."""
-    try:
-        response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
-
-        # Log da resposta bruta para depuração
-        print("Resposta da API Agis:", response.text)
-
-        if response.status_code != 200:
-            print(f"Erro {response.status_code}: {response.text}")
-            return None
-
-        try:
-            data = response.json()
-        except requests.exceptions.JSONDecodeError:
-            print("Erro: Resposta da API Agis não é um JSON válido ou está vazia.")
-            return None
-
-        return data
-    except Exception as e:
-        print(f"Erro ao conectar à API da Agis: {e}")
-        return None
-
-
-def transform_to_table(data):
-    """Transforma os dados da Agis em DataFrame somando os estoques de todos os warehouses."""
-    produtos = []
-
-    if not data or "items" not in data:
-        print("Erro: Dados inválidos ou API Agis retornou resposta incompleta.")
-        return pd.DataFrame()
-
-    for produto in data["items"]:
-        sku = produto.get("sku", "N/A")
-        nome = produto.get("name", "N/A")
-        stock_list = produto.get("stock", [])
-
-        total_estoque = 0
-        precos = []
-
-        for s in stock_list:
-            try:
-                qty = int(s.get("qty", 0))
-                preco = float(s.get("price", 0))
-                total_estoque += qty
-                precos.append(preco)
-            except:
-                continue
-
-        preco_final = max(precos) if precos else 0
-
-        # Ajuste de preço (se > 400)
-        if preco_final > 400:
-            preco_final = preco_final / 0.80
+        response = wcapi.put(f"products/{produto_id}", dados)
+        if response.status_code == 200:
+            print(f"✅ Atualizado: SKU {sku} | Preço R${novo_preco} | Estoque {novo_estoque}")
         else:
-            preco_final = 0
-
-        produtos.append({
-            "SKU": sku,
-            "NOME": nome,
-            "QUANTIDADE": total_estoque,
-            "PRECO": preco_final
-        })
-
-    df = pd.DataFrame(produtos)
-
-    if "SKU" not in df.columns:
-        print("Erro: Coluna 'SKU' não encontrada no DataFrame Agis.")
-        return pd.DataFrame()
-
-    df.columns = df.columns.str.strip()
-    df["SKU"] = df["SKU"].astype(str)
-    
-    return df
+            print(f"❌ Erro ao atualizar SKU {sku}: {response.text}")
+    else:
+        print(f"Produto com SKU '{sku}' não encontrado.")
 
 
 # --------------------------- ROTINA PRINCIPAL ---------------------------
 
 if __name__ == "__main__":
-    produtos_agis_raw = fetch_produtos_agis()
-    tabela_agis = transform_to_table(produtos_agis_raw)
+    produtos_agis_df = fetch_all_products_agis()
     tabela_wc = listar_produtos_woocommerce()
 
-    # Verifique as colunas antes do merge
-    print("Colunas tabela_wc:", tabela_wc.columns)
-    print("Colunas tabela_agis:", tabela_agis.columns)
+    if not produtos_agis_df.empty and not tabela_wc.empty:
+        produtos_agis_df.rename(columns={"sku": "SKU"}, inplace=True)
 
-    if "sku" in tabela_agis.columns:
-        tabela_agis.rename(columns={"sku": "SKU"}, inplace=True)
+        print("✅ Dados da Agis e WooCommerce prontos para integração.")
+        print("🔍 Iniciando merge das tabelas...")
 
-    if not tabela_wc.empty and not tabela_agis.empty:
-        tabela_final = pd.merge(tabela_wc, tabela_agis, on="SKU", how="inner")
+        tabela_final = pd.merge(tabela_wc, produtos_agis_df, on="SKU", how="inner")
 
         for _, row in tabela_final.iterrows():
             atualizar_produto(
                 sku=row["SKU"],
-                novo_preco=row["PRECO"],
-                novo_estoque=row["QUANTIDADE"]
+                novo_preco=row["price"],  # Ajuste para o campo correto da API Agis
+                novo_estoque=row["stock"][0]["qty"] if "stock" in row and row["stock"] else 0
             )
     else:
-        print("Erro: Um dos DataFrames está vazio, não foi possível realizar o merge.")
+        print("🚨 Um dos DataFrames está vazio, não foi possível realizar o merge.")
