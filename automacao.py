@@ -12,8 +12,8 @@ pd.set_option('display.max_columns', None)  # Exibe todas as colunas
 # Configurações da API do WooCommerce
 wcapi = API(
     url="https://eutec.com.br",  # URL do seu site WordPress
-    consumer_key="ck_db5e015c95fa44b57f090cd4831c5571eb4d6a18",  # Sua Consumer Key
-    consumer_secret="cs_fe5d98b280d0aa1fd3f32f81067906d1c2445938",  # Sua Consumer Secret
+    consumer_key="ck_05ef85a1f66f60608bc58f09fe28921c9d441648",  # Sua Consumer Key
+    consumer_secret="cs_4d4d9b7c3136936f4d2fc2942e293451f7dff001",  # Sua Consumer Secret
     version="wc/v3",  # Versão da API do WooCommerce
     timeout=10  # Tempo limite da requisição
 )
@@ -49,7 +49,6 @@ def listar_produtos():
 
             # Adicionar os produtos à lista
             for produto in produtos:
-                if produto.get("manage_stock", False):
                 id_produto = produto.get("sku", "Sem SKU")
                 preco = produto.get("price", "Sem Preço")
                 estoque = produto.get("stock_quantity", "Sem Estoque")
@@ -172,8 +171,8 @@ def transform_to_table(data):
                 qty = qty_2
 
             # Reajuste de preço (caso acima de R$487, aplicar taxa de 4%)
-            if(price > 400):
-                price = price/0.80 
+            if(price > 487):
+                price = price/0.96  
                 
             else:
                 price = 0   
@@ -209,4 +208,3 @@ if __name__ == "__main__":
     while i < len(tabela_final):
         atualizar_produto(str(tabela_final.iloc[i,0]), float(tabela_final.iloc[i,6]), int(tabela_final.iloc[i,5]))
         i = i+1
-    
