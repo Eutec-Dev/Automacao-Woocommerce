@@ -1,23 +1,22 @@
-# ---------------------- IMPORTAÇÃO DE BIBLIOTECAS NECESSÁRIAS ----------------------
-import requests  # Requisições HTTP
-import pandas as pd  # Manipulação de tabelas
-from woocommerce import API  # Conexão com WooCommerce
-import urllib.parse  # Codificação de URLs (necessário para SKUs especiais)
+import requests  # Para requisições HTTP
+import pandas as pd  # Para manipulação de dados em tabelas
+from woocommerce import API  # Cliente WooCommerce API
+import urllib.parse  # Para URL encode do SKU
 
-# ---------------------- CONFIGURAÇÕES INICIAIS ----------------------
+# Configuração para exibir todos os dados no console (debug)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
-# Configuração da API WooCommerce
+# Configurações da API WooCommerce
 wcapi = API(
-    url="https://eutec.com.br",
+    url="https://eutec.com.br",  # URL do WooCommerce
     consumer_key="ck_5506e564a1f28a33558e9da73b33823db3c15510",
     consumer_secret="cs_07393e037d36912181839d01905909d568448350",
     version="wc/v3",
-    timeout=15
+    timeout=10
 )
 
-# Configuração da API Agis
+# Configurações da API da Agis
 API_URL = "https://vendas.agis.com.br/rest/all/V1/agis/reseller/product/list"
 TOKEN = "1cnl71wepg3cqhu3t2nys2jgkks68yng"
 HEADERS = {
@@ -29,138 +28,148 @@ PARAMS = {
     "searchCriteria[pageSize]": 1000
 }
 
-# ---------------------- FUNÇÕES WOO COMMERCE ----------------------
-
-# Lista todos os produtos WooCommerce com seus SKUs, preços e estoque
+# Função para listar todos os produtos do WooCommerce (com gerenciador de estoque ativo)
 def listar_produtos():
     lista_produtos = []
     pagina = 1
 
     while True:
+        # Busca produtos paginados com 100 por página
         response = wcapi.get("products", params={"per_page": 100, "page": pagina})
-        if response.status_code != 200:
+
+        if response.status_code == 200:
+            produtos = response.json()
+
+            if not produtos:
+                break  # Sai quando não tiver mais produtos
+
+            for produto in produtos:
+                # Verifica se gerenciador de estoque está ativo para atualizar somente estes
+                if produto.get("manage_stock", False):
+                    sku = produto.get("sku", "").strip()
+                    preco = produto.get("price", "0")
+                    estoque = produto.get("stock_quantity", 0)
+                    produto_id = produto.get("id")
+                    lista_produtos.append([produto_id, sku, preco, estoque])
+
+            pagina += 1
+        else:
             print("Erro ao buscar produtos:", response.text)
             break
 
-        produtos = response.json()
-        if not produtos:
-            break  # Fim da paginação
+    # Cria DataFrame com os produtos filtrados
+    df = pd.DataFrame(lista_produtos, columns=["ID", "SKU", "Preco", "Estoque"])
 
-        for produto in produtos:
-            # Apenas adiciona se manage_stock for True
-            if produto.get("manage_stock", False):
-                lista_produtos.append([
-                    produto.get("sku", "Sem SKU"),
-                    produto.get("price", 0),
-                    produto.get("stock_quantity", 0)
-                ])
-        pagina += 1
-
-    df = pd.DataFrame(lista_produtos, columns=["SKU", "Preco", "Estoque"])
+    # Remove produtos sem preço ou estoque válido
     df = df[df["Preco"].astype(float) > 0]
-    df = df.dropna(subset=["Estoque"])
+    df = df[df["Estoque"].notna()]
+
     return df
 
-# Obtém o ID do produto pelo SKU, sem filtro no manage_stock (para buscar todos)
+# Função para buscar ID do produto WooCommerce por SKU (com URL encode e strip)
 def obter_id_por_sku(sku):
     sku = sku.strip()
-    sku_encoded = urllib.parse.quote(sku, safe='')  # Codifica o SKU para caracteres especiais
-    try:
-        response = wcapi.get("products", params={"sku": sku_encoded})
-        if response.status_code == 200 and response.json():
-            produto = response.json()[0]
-            return produto["id"]
-        else:
-            print(f"[⚠️] Produto com SKU '{sku}' não encontrado.")
-    except Exception as e:
-        print(f"[ERRO] Falha ao obter produto SKU '{sku}': {e}")
-    return None
+    sku_encoded = urllib.parse.quote(sku, safe='')  # URL encode do SKU
 
-# Atualiza um produto existente com novo preço, estoque e força gerenciar estoque
+    print(f"Buscando produto com SKU codificado: '{sku_encoded}'")
+    response = wcapi.get("products", params={"sku": sku_encoded})
+
+    if response.status_code == 200 and response.json():
+        print("Resposta da API para busca de SKU:", response.json())
+        produto = response.json()[0]
+        return produto["id"]
+    else:
+        print(f"Produto com SKU '{sku}' não encontrado ou erro na API.")
+        return None
+
+# Função para atualizar produto existente no WooCommerce (preço, estoque, gerenciador ativo)
 def atualizar_produto(sku, novo_preco, novo_estoque):
     produto_id = obter_id_por_sku(sku)
-    if produto_id:
-        dados = {
-            "regular_price": str(novo_preco),
-            "stock_quantity": int(novo_estoque),
-            "manage_stock": True,  # Força ativar gerenciador de estoque
-            "stock_status": "instock" if int(novo_estoque) > 0 else "outofstock"
-        }
-        try:
-            response = wcapi.put(f"products/{produto_id}", dados)
-            print(f"[OK] SKU '{sku}' atualizado com preço R${novo_preco:.2f} e estoque {novo_estoque}")
-        except Exception as e:
-            print(f"[ERRO] Falha ao atualizar SKU '{sku}': {e}")
+    if produto_id is None:
+        print(f"Não foi possível atualizar o produto com SKU '{sku}': ID não encontrado.")
+        return
 
-# ---------------------- FUNÇÕES API AGIS ----------------------
+    dados = {
+        "regular_price": str(novo_preco),
+        "stock_quantity": novo_estoque,
+        "manage_stock": True,  # Garante que o gerenciador de estoque está ativo
+        "in_stock": novo_estoque > 0,  # Atualiza status de estoque
+    }
 
-# Busca os produtos da API Agis
+    response = wcapi.put(f"products/{produto_id}", dados)
+    if response.status_code == 200:
+        print(f"Produto SKU '{sku}' atualizado com sucesso.")
+    else:
+        print(f"Erro ao atualizar produto SKU '{sku}':", response.text)
+
+# Função para buscar produtos na API da Agis
 def fetch_products(api_url, headers, params):
     try:
         response = requests.get(api_url, headers=headers, params=params)
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"[ERRO AGIS] {response.status_code}: {response.text}")
+            print(f"Erro {response.status_code} ao buscar produtos da Agis:", response.text)
+            return None
     except Exception as e:
-        print(f"[ERRO] Conexão com API Agis: {e}")
-    return None
+        print(f"Erro de conexão à API da Agis:", str(e))
+        return None
 
-# Transforma resposta da API Agis em DataFrame
+# Transforma dados da API da Agis em DataFrame
 def transform_to_table(data):
-    produtos = []
+    if data and "items" in data:
+        products = []
 
-    if not data or "items" not in data:
-        print("Nenhum dado retornado pela API da Agis.")
+        for product in data["items"]:
+            sku = product.get("sku", "").strip()
+            name = product.get("name", "N/A")
+            stock = product.get("stock", [])
+            
+            # Inicializa variáveis para estoque e preço
+            qty = 0
+            price = 0
+
+            # Busca estoque e preço no warehouse "007" (ou outro critério)
+            for s in stock:
+                if s.get("warehouse") == "007":
+                    qty = s.get("qty", 0)
+                    price = s.get("price", 0)
+
+            # Ajusta preço conforme regra (exemplo)
+            if price > 0:
+                price = price / 0.80
+            else:
+                price = 0
+
+            products.append({
+                "SKU": sku,
+                "NOME": name,
+                "QUANTIDADE": int(qty),
+                "PRECO": float(price)
+            })
+
+        return pd.DataFrame(products)
+    else:
+        print("Nenhum dado válido recebido da API da Agis.")
         return pd.DataFrame()
 
-    for produto in data["items"]:
-        sku = produto.get("sku", "N/A")
-        nome = produto.get("name", "N/A")
-        stock = produto.get("stock", [])
-
-        if len(stock) < 2:
-            continue  # Ignora se não há dados de estoque suficientes
-
-        warehouse = 0
-        qty = 0
-
-        # Verifica o warehouse 7 nos dois registros
-        for s in stock:
-            if s.get("warehouse") == 7 or s.get("warehouse") == "007":  # Atento para string '007'
-                warehouse = s.get("warehouse")
-                qty = s.get("qty")
-                preco = s.get("price", 0)
-                break
-        else:
-            continue  # Se não encontrou warehouse 7, pula
-
-        preco_reajustado = preco / 0.80 if preco > 0 else 0  # Reajuste de preço
-
-        produtos.append({
-            "SKU": sku,
-            "NOME": nome,
-            "WAREHOUSE": warehouse,
-            "QUANTIDADE": qty,
-            "PRECO": preco_reajustado
-        })
-
-    return pd.DataFrame(produtos)
-
-# ---------------------- EXECUÇÃO PRINCIPAL ----------------------
+# ------------------ Execução principal -------------------
 
 if __name__ == "__main__":
-    produtos_agis = fetch_products(API_URL, HEADERS, PARAMS)
-    tabela_agis = transform_to_table(produtos_agis)
+    # Busca produtos da API Agis
+    data_agis = fetch_products(API_URL, HEADERS, PARAMS)
+    tabela_agis = transform_to_table(data_agis)
 
-    tabela_woo = listar_produtos()
+    # Lista produtos do WooCommerce com estoque gerenciado ativo
+    tabela_wc = listar_produtos()
 
-    # Merge entre produtos da loja e da Agis (apenas os que estão em ambas)
-    tabela_final = tabela_woo.merge(tabela_agis, on="SKU", how="inner")
+    # Faz merge dos produtos via SKU (produtos que existem nas duas bases)
+    tabela_final = tabela_wc.merge(tabela_agis, on="SKU", how="inner")
 
-    # Atualiza os produtos da loja com base nos dados da Agis
-    for _, row in tabela_final.iterrows():
-        sku = str(row["SKU"])
-        novo_preco = float(row["PRECO"])
-        novo_estoque = int(row["QUANTIDADE"])
-        atualizar_produto(sku, novo_preco, novo_estoque)
+    # Atualiza os produtos conforme dados da Agis
+    for i, row in tabela_final.iterrows():
+        sku = row["SKU"]
+        preco = row["PRECO"]
+        estoque = row["QUANTIDADE"]
+        print(f"Atualizando SKU: '{sku}' com preço {preco} e estoque {estoque}")
+        atualizar_produto(sku, preco, estoque)
