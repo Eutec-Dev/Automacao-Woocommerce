@@ -25,7 +25,7 @@ HEADERS = {
 }
 PARAMS = {
     "searchCriteria[currentPage]": 1,
-    "searchCriteria[pageSize]": 1000
+    "searchCriteria[pageSize]": 2000
 }
 
 # Função para codificar SKU corretamente
