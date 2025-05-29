@@ -24,38 +24,6 @@ PARAMS = {
     "searchCriteria[pageSize]": 1000
 }
 
-def listar_produtos():
-    """Busca todos os produtos do WooCommerce com estoque gerenciado ativo"""
-    lista = []
-    page = 1
-
-    while True:
-        response = wcapi.get("products", params={"per_page": 100, "page": page})
-
-        if response.status_code != 200:
-            print("Erro ao buscar produtos:", response.text)
-            break
-
-        produtos = response.json()
-        if not produtos:
-            break
-
-        for produto in produtos:
-            if produto.get("manage_stock", False):
-                sku = produto.get("sku", "").strip()  # Mantendo espaços e caracteres
-                preco = produto.get("price", "0")
-                estoque = produto.get("stock_quantity", 0)
-                produto_id = produto.get("id")
-                lista.append([produto_id, sku, preco, estoque])
-
-        page += 1
-
-    df = pd.DataFrame(lista, columns=["ID", "SKU", "Preco", "Estoque"])
-    df = df[df["Preco"].astype(float) > 0]
-    df = df[df["Estoque"].notna()]
-
-    return df
-
 def obter_id_por_sku(sku):
     """Busca o ID do produto na WooCommerce via SKU"""
     sku = sku.strip()  # Mantendo espaços
@@ -86,7 +54,7 @@ def atualizar_produto(sku, novo_preco, novo_estoque, tentativas=3):
             return
         else:
             print(f"[X] Tentativa {tentativa+1} falhou ao atualizar SKU '{sku}': {response.text}")
-            time.sleep(2)  # Espera um pouco antes de tentar novamente
+            time.sleep(2)  # Espera antes de tentar novamente
 
     print(f"[!] Falha ao atualizar SKU '{sku}' após {tentativas} tentativas. Pulando para o próximo.")
 
@@ -103,67 +71,55 @@ def fetch_products(api_url, headers, params):
         print("Erro de conexão à API Agis:", str(e))
         return None
 
-def transform_to_table(data):
-    """Converte os dados da Agis em uma tabela com SKU, nome, estoque e preço"""
-    if not data or "items" not in data:
-        print("Dados inválidos da Agis.")
-        return pd.DataFrame()
+def buscar_e_atualizar_por_sku():
+    """Consulta SKU por SKU e atualiza produtos imediatamente"""
+    page = 1
 
-    produtos = []
+    while True:
+        response = wcapi.get("products", params={"per_page": 100, "page": page})
 
-    for item in data["items"]:
-        sku = item.get("sku", "").strip()  # Mantendo espaços e caracteres especiais
-        name = item.get("name", "")
-        stock = item.get("stock", [])
+        if response.status_code != 200:
+            print("Erro ao buscar produtos:", response.text)
+            break
 
-        qty = 0
-        price = 0
+        produtos = response.json()
+        if not produtos:
+            break
 
-        for s in stock:
-            if s.get("warehouse") == "007":
-                qty = s.get("qty", 0)
-                price = s.get("price", 0)
+        for produto in produtos:
+            if produto.get("manage_stock", False):  # Só os produtos com estoque gerenciado
+                sku = produto.get("sku", "").strip()  # Mantendo espaços e caracteres especiais
+                print(f"🔄 Buscando SKU '{sku}' na Agis...")
 
-        if price > 0:
-            price = price / 0.80  # margem de 25%
-        else:
-            price = 0
+                # Busca na API Agis
+                dados_agis = fetch_products(API_URL, HEADERS, {**PARAMS, "searchCriteria[filterGroups][0][filters][0][field]": "sku", "searchCriteria[filterGroups][0][filters][0][value]": sku})
+                if not dados_agis or "items" not in dados_agis or not dados_agis["items"]:
+                    print(f"[!] SKU '{sku}' não encontrado na Agis. Pulando para o próximo.")
+                    continue  # Pula para o próximo SKU
 
-        produtos.append({
-            "SKU": sku,
-            "NOME": name,
-            "QUANTIDADE": int(qty),
-            "PRECO": float(price)
-        })
+                # Processa os dados encontrados
+                item = dados_agis["items"][0]  # Como só buscamos um SKU, pegamos o primeiro resultado
+                qty = 0
+                price = 0
 
-    return pd.DataFrame(produtos)
+                for s in item.get("stock", []):
+                    if s.get("warehouse") == "007":
+                        qty = s.get("qty", 0)
+                        price = s.get("price", 0)
+
+                if price > 0:
+                    price = price / 0.80  # Aplica margem
+
+                print(f"🛠 Atualizando SKU: '{sku}' | Preço: R${price:.2f} | Estoque: {qty}")
+                atualizar_produto(sku, price, qty)
+
+                time.sleep(1)  # Mantém tempo entre requisições
+
+        page += 1
+
+    print("\n✅ Atualização concluída.")
 
 # Execução principal
 if __name__ == "__main__":
-    print("🔄 Buscando produtos da Agis...")
-    dados_agis = fetch_products(API_URL, HEADERS, PARAMS)
-    tabela_agis = transform_to_table(dados_agis)
-
-    print("🛒 Buscando produtos da WooCommerce...")
-    tabela_wc = listar_produtos()
-
-    # Mantendo espaços nos SKUs antes do merge
-    tabela_wc["SKU"] = tabela_wc["SKU"].str.strip()
-    tabela_agis["SKU"] = tabela_agis["SKU"].str.strip()
-
-    print("\n🔍 SKUs WooCommerce:", tabela_wc["SKU"].tolist())
-    print("🔍 SKUs Agis:", tabela_agis["SKU"].tolist())
-
-    tabela_final = tabela_wc.merge(tabela_agis, on="SKU", how="inner")
-
-    print(f"🔧 {len(tabela_final)} produtos em comum encontrados. Iniciando atualização...\n")
-
-    for _, row in tabela_final.iterrows():
-        sku = row["SKU"]
-        preco = row["PRECO"]
-        estoque = row["QUANTIDADE"]
-        print(f"Atualizando SKU: '{sku}' | Preço: R${preco:.2f} | Estoque: {estoque}")
-        atualizar_produto(sku, preco, estoque)
-        time.sleep(1)  # Mantém tempo entre requisições
-
-    print("\n✅ Atualização concluída.")
+    print("🔧 Iniciando atualização SKU por SKU...")
+    buscar_e_atualizar_por_sku()
