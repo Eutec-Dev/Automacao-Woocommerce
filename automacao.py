@@ -1,7 +1,8 @@
 import requests
 import pandas as pd
 from woocommerce import API
-import time  # Para evitar problemas de taxa de requisição
+import time
+import urllib.parse  # Para codificar SKUs corretamente
 
 # Configuração da API WooCommerce
 wcapi = API(
@@ -27,8 +28,9 @@ PARAMS = {
 def obter_id_por_sku(sku):
     """Busca o ID do produto na WooCommerce via SKU"""
     sku = sku.strip()  # Mantendo espaços
-    response = wcapi.get("products", params={"sku": sku})  # Enviando SKU sem codificação
+    print(f"🔍 Buscando SKU na WooCommerce: '{sku}'")  # Log de depuração
 
+    response = wcapi.get("products", params={"sku": sku})  # Enviando SKU sem codificação
     if response.status_code == 200 and response.json():
         return response.json()[0]["id"]
     return None
@@ -58,18 +60,17 @@ def atualizar_produto(sku, novo_preco, novo_estoque, tentativas=3):
 
     print(f"[!] Falha ao atualizar SKU '{sku}' após {tentativas} tentativas. Pulando para o próximo.")
 
-def fetch_products(api_url, headers, params):
-    """Busca produtos da API Agis"""
-    try:
-        response = requests.get(api_url, headers=headers, params=params)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print("Erro ao buscar da Agis:", response.status_code, response.text)
-            return None
-    except Exception as e:
-        print("Erro de conexão à API Agis:", str(e))
-        return None
+def buscar_sku_na_agis(sku):
+    """Busca um SKU na API Agis formatando corretamente"""
+    sku_formatado = urllib.parse.quote(sku, safe='')  # Codifica espaços e caracteres especiais
+    print(f"🔍 Buscando SKU formatado na Agis: '{sku_formatado}'")  # Log de depuração
+
+    response = requests.get(API_URL, headers=HEADERS, params={
+        "searchCriteria[filterGroups][0][filters][0][field]": "sku",
+        "searchCriteria[filterGroups][0][filters][0][value]": sku_formatado
+    })
+    
+    return response.json() if response.status_code == 200 else None
 
 def buscar_e_atualizar_por_sku():
     """Consulta SKU por SKU e atualiza produtos imediatamente"""
@@ -87,25 +88,26 @@ def buscar_e_atualizar_por_sku():
             break
 
         for produto in produtos:
-            if produto.get("manage_stock", False):  # Só os produtos com estoque gerenciado
+            if produto.get("manage_stock", False):
                 sku = produto.get("sku", "").strip()  # Mantendo espaços e caracteres especiais
                 print(f"🔄 Buscando SKU '{sku}' na Agis...")
 
                 # Busca na API Agis
-                dados_agis = fetch_products(API_URL, HEADERS, {**PARAMS, "searchCriteria[filterGroups][0][filters][0][field]": "sku", "searchCriteria[filterGroups][0][filters][0][value]": sku})
+                dados_agis = buscar_sku_na_agis(sku)
                 if not dados_agis or "items" not in dados_agis or not dados_agis["items"]:
                     print(f"[!] SKU '{sku}' não encontrado na Agis. Pulando para o próximo.")
                     continue  # Pula para o próximo SKU
 
                 # Processa os dados encontrados
-                item = dados_agis["items"][0]  # Como só buscamos um SKU, pegamos o primeiro resultado
+                item = dados_agis["items"][0]
                 qty = 0
                 price = 0
 
                 for s in item.get("stock", []):
-                    if s.get("warehouse") == "007":
-                        qty = s.get("qty", 0)
-                        price = s.get("price", 0)
+                    if s.get("warehouse") in ["007", "004"]:  # Inclui ambos os depósitos
+                        qty += s.get("qty", 0)  # Soma os estoques
+                        if s.get("price", 0) > 0:
+                            price = s.get("price", 0)  # Usa o preço do warehouse que tem estoque disponível
 
                 if price > 0:
                     price = price / 0.80  # Aplica margem
