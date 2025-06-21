@@ -30,5 +30,5 @@ jobs:
           # pip install -r requirements.txt
 
       - name: Rodar o script de sincronização
-        # Certifique-se de que 'scripts/update_products.py' é o caminho correto para o seu script
-        run: python scripts/update_products.py
+        # AGORA APONTANDO PARA automacao.py NA RAIZ DO REPOSITÓRIO
+        run: python automacao.py
