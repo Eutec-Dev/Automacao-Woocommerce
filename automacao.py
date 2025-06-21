@@ -10,7 +10,7 @@ wcapi = API(
     consumer_key="ck_5506e564a1f28a33558e9da73b33823db3c15510",
     consumer_secret="cs_07393e037d36912181839d01905909d568448350",
     version="wc/v3",
-    timeout=20 # Aumentei o timeout para 20 segundos para WC
+    timeout=30 # Aumentei o timeout para 30 segundos para WC e Agis
 )
 
 # --- Configuração da API Agis ---
@@ -35,14 +35,15 @@ def get_all_woocommerce_manageable_products():
     print("🔧 Buscando produtos da WooCommerce com gerenciamento de estoque ativo...")
     while True:
         try:
-            # Filtra por produtos com gerenciamento de estoque ativo.
-            # 'status': 'publish' pode ser adicionado se você quiser apenas produtos publicados
-            response = wcapi.get("products", params={"per_page": per_page, "page": page, "manage_stock": "true"})
+            response = wcapi.get("products", params={"per_page": per_page, "page": page, "manage_stock": "true", "status": "publish"})
             
             if response.status_code != 200:
                 print(f"❌ Erro ao buscar produtos da WooCommerce (Página {page}): {response.status_code} - {response.text}")
-                # Considerar uma estratégia de retry aqui se o erro não for crítico
-                break
+                # Em caso de erro HTTP diferente de 200, loga e tenta o próximo
+                if response.status_code == 404: # Exemplo: 404 pode significar que não há mais páginas
+                    break 
+                time.sleep(5) # Espera e tenta novamente no próximo loop
+                continue
 
             products = response.json()
             if not products:
@@ -52,10 +53,17 @@ def get_all_woocommerce_manageable_products():
             for p in products:
                 # Garante que 'stock_quantity' seja um número (int) ou 0
                 stock_qty = p.get("stock_quantity") if p.get("stock_quantity") is not None else 0
+                
+                # --- CORREÇÃO APLICADA AQUI PARA O VALUERRORED ---
+                price_str = p.get("regular_price") 
+                # Se price_str for None ou uma string vazia, usa 0.0, senão converte
+                regular_price_value = float(price_str) if price_str else 0.0 
+                # --- FIM DA CORREÇÃO ---
+                
                 all_wc_products_data.append({
                     "id": p["id"],
                     "sku": str(p.get("sku", "")).strip(), # Garante que SKU é string e limpo
-                    "regular_price_wc": float(p.get("regular_price", 0)),
+                    "regular_price_wc": regular_price_value,
                     "stock_quantity_wc": int(stock_qty),
                     "in_stock_wc": p.get("in_stock", False) # Salva o status de estoque atual da WC
                 })
@@ -63,15 +71,19 @@ def get_all_woocommerce_manageable_products():
             print(f"   ✅ Página {page} da WooCommerce processada. Produtos encontrados com estoque gerenciado: {len(products)}")
             
             page += 1
-            time.sleep(0.1) # Pequeno atraso para respeitar os limites de taxa da WC
+            time.sleep(0.2) # Pequeno atraso para respeitar os limites de taxa da WC
 
         except requests.exceptions.Timeout:
             print(f"⏰ Timeout ao buscar produtos da WooCommerce na página {page}. Tentando novamente...")
-            time.sleep(5) # Espera e tenta novamente
+            time.sleep(10) # Espera mais tempo e tenta novamente
+            continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Erro de conexão ao buscar produtos da WooCommerce na página {page}: {e}. Verifique sua rede/servidor.")
+            time.sleep(15) # Espera mais em caso de erro de conexão
             continue
         except requests.exceptions.RequestException as e:
-            print(f"❌ Erro de requisição ao buscar produtos da WooCommerce na página {page}: {e}")
-            break
+            print(f"❌ Erro de requisição desconhecido ao buscar produtos da WooCommerce na página {page}: {e}")
+            break # Erro genérico, pode ser melhor parar
 
     if not all_wc_products_data:
         print("⚠️ Nenhum produto com gerenciamento de estoque ativo encontrado na WooCommerce.")
@@ -100,8 +112,10 @@ def get_all_agis_products():
             
             if response.status_code != 200:
                 print(f"❌ Erro ao buscar produtos da Agis (Página {page}): {response.status_code} - {response.text}")
-                # Considerar uma estratégia de retry aqui se o erro não for crítico
-                break
+                if response.status_code == 404:
+                    break
+                time.sleep(5)
+                continue
 
             data = response.json()
             items = data.get("items", [])
@@ -121,8 +135,10 @@ def get_all_agis_products():
                     if s.get("warehouse") in ["007", "004"]:
                         qty += s.get("qty", 0)
                         # Assume que se houver múltiplos preços, você quer o último encontrado > 0
-                        if s.get("price", 0) > 0: 
-                            price = s.get("price", 0) 
+                        # Certifica-se de que o preço é um número antes de usar
+                        current_price_agis = float(s.get("price", 0)) if str(s.get("price", 0)).replace('.', '', 1).isdigit() else 0.0
+                        if current_price_agis > 0: 
+                            price = current_price_agis 
 
                 # Aplica a margem se o preço for válido
                 final_price = price / 0.80 if price > 0 else 0
@@ -143,8 +159,12 @@ def get_all_agis_products():
             print(f"⏰ Timeout ao buscar produtos da Agis na página {page}. Tentando novamente...")
             time.sleep(10) # Espera mais tempo e tenta novamente
             continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Erro de conexão ao buscar produtos da Agis na página {page}: {e}. Verifique sua rede/servidor.")
+            time.sleep(15)
+            continue
         except requests.exceptions.RequestException as e:
-            print(f"❌ Erro de requisição ao buscar produtos da Agis na página {page}: {e}")
+            print(f"❌ Erro de requisição desconhecido ao buscar produtos da Agis na página {page}: {e}")
             break
 
     if not all_agis_products_data:
@@ -175,8 +195,6 @@ def update_products_in_bulk():
         return
 
     # 3. Criar a tabela de produtos para comparação (JOIN dos DataFrames)
-    # df_wc e df_agis já devem ter SKUs limpos das funções de busca
-    # 'how=left' garante que todos os produtos da WooCommerce sejam considerados.
     df_merged = pd.merge(df_wc, df_agis, on='sku', how='left')
 
     print("\n📊 Tabela de produtos para comparação criada. Identificando atualizações necessárias...")
@@ -213,20 +231,23 @@ def update_products_in_bulk():
             if agis_stock != wc_stock:
                 new_stock = agis_stock
                 needs_update = True
-            
+                
             # O status 'in_stock' deve refletir a nova quantidade de estoque
-            if (new_stock > 0) != new_in_stock_status: # Se o status de estoque mudou
-                new_in_stock_status = (new_stock > 0)
+            # True se new_stock > 0, False caso contrário
+            expected_in_stock_status = (new_stock > 0)
+            if expected_in_stock_status != wc_in_stock: # Se o status de estoque mudou
+                new_in_stock_status = expected_in_stock_status
                 needs_update = True
 
         else:
             # SKU da WooCommerce não encontrado na Agis. Define estoque como 0 na WC.
             print(f"   [!] SKU '{sku}' (ID: {product_id}) da WooCommerce NÃO encontrado na Agis.")
-            if wc_stock > 0 or wc_in_stock: # Só atualiza se o estoque atual for > 0 ou se estiver marcado como 'em estoque'
+            # Só atualiza se o estoque atual for > 0 ou se estiver marcado como 'em estoque'
+            if wc_stock > 0 or wc_in_stock: 
                 new_stock = 0
                 new_in_stock_status = False
                 needs_update = True
-                print(f"      -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce.")
+                print(f"     -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce.")
         
         if needs_update:
             products_to_update_count += 1
@@ -262,14 +283,23 @@ def update_products_in_bulk():
                 print(f"   ❌ Erro ao enviar lote de atualizações ({len(batch)} itens): {response.status_code} - {response.text}")
                 error_response = response.json()
                 if 'data' in error_response and 'details' in error_response['data']:
-                    print(f"      Detalhes do erro: {error_response['data']['details']}")
+                    print(f"     Detalhes do erro: {error_response['data']['details']}")
+                # Pode haver erros específicos por item no lote
+                if 'errors' in error_response:
+                    for error_item in error_response['errors']:
+                        print(f"       Erro no item {error_item.get('id')} ({error_item.get('code')}): {error_item.get('message')}")
+
             time.sleep(1) # Pequeno atraso entre os lotes
         except requests.exceptions.Timeout:
             print(f"⏰ Timeout ao enviar lote de atualizações. Tentando o próximo lote...")
             time.sleep(5) # Espera e tenta o próximo lote
             continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Erro de conexão ao enviar lote de atualizações: {e}. Verifique sua rede/servidor.")
+            time.sleep(10)
+            continue
         except requests.exceptions.RequestException as e:
-            print(f"❌ Erro de requisição ao enviar lote de atualizações: {e}")
+            print(f"❌ Erro de requisição desconhecido ao enviar lote de atualizações: {e}")
             # Se um erro grave ocorrer, pode ser necessário parar ou registrar e notificar
             break
 
