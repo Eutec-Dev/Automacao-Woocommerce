@@ -216,15 +216,20 @@ def update_products_in_bulk():
         agis_price_found = not pd.isna(row['agis_price'])
         agis_stock_found = not pd.isna(row['agis_stock'])
 
+        # --- CORREÇÃO: Inicializar agis_price e agis_stock antes do bloco condicional ---
+        agis_price = 0.0 # Valor padrão para caso não seja encontrado na Agis
+        agis_stock = 0   # Valor padrão para caso não seja encontrado na Agis
+
         new_price = wc_price # Inicializa com o preço atual da WC
         new_stock = wc_stock # Inicializa com o estoque atual da WC
         new_in_stock_status = wc_in_stock # Inicializa com o status de estoque atual da WC
         needs_update = False
 
         if agis_price_found and agis_stock_found:
-            agis_price = round(row['agis_price'], 2) # Preço da Agis já com a margem aplicada
+            agis_price = round(row['agis_price'], 2) # Atribui o valor real da Agis
+            agis_stock = int(row['agis_stock'])     # Atribui o valor real da Agis
 
-            # --- NOVA LÓGICA PRINCIPAL APLICADA AQUI ---
+            # --- Lógica principal para filtro de preço e estoque com base na Agis ---
             if agis_price <= PRICE_THRESHOLD:
                 # Regra: Se o produto na Agis custa <= R$400, zerar estoque na WC e NÃO ATUALIZAR PREÇO.
                 print(f"    🚫 SKU '{sku}' (ID: {product_id}): Preço da Agis ({agis_price:.2f}) é <= R${PRICE_THRESHOLD:.2f}. PREÇO NÃO SERÁ ATUALIZADO.")
@@ -275,8 +280,8 @@ def update_products_in_bulk():
             
             # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
             # E não estamos no cenário onde o preço da Agis é <= PRICE_THRESHOLD (onde o preço não deve ser atualizado)
+            # ou se era 0 na WC e agora o Agis_price > 400
             if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
-                # Este if garante que o preço só é enviado se mudou ou se era 0 e o agis_price agora é > 400
                 update_data['regular_price'] = str(f"{new_price:.2f}")
             else:
                 # Se o preço não foi alterado ou se a regra de <=400 da Agis o manteve inalterado,
