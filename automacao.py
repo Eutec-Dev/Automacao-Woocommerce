@@ -11,7 +11,7 @@ wcapi = API(
     consumer_key="ck_5506e564a1f28a33558e9da73b33823db3c15510",
     consumer_secret="cs_07393e037d36912181839d01905909d568448350",
     version="wc/v3",
-    timeout=30 
+    timeout=30
 )
 
 # --- Configuração da API Agis ---
@@ -26,7 +26,7 @@ HEADERS = {
 
 def get_all_woocommerce_manageable_products():
     """
-    Busca TODOS os produtos da WooCommerce que têm 'manage_stock' ativo.
+    Busca TODOS os produtos da WooCommerce que têm 'manage_stock' ativo e status 'publish'.
     Retorna um DataFrame do Pandas.
     """
     all_wc_products_data = []
@@ -56,11 +56,9 @@ def get_all_woocommerce_manageable_products():
                 # Garante que 'stock_quantity' seja um número (int) ou 0
                 stock_qty = p.get("stock_quantity") if p.get("stock_quantity") is not None else 0
                 
-                # --- CORREÇÃO APLICADA AQUI PARA O VALUERRORED ---
-                price_str = p.get("regular_price") 
-                # Se price_str for None ou uma string vazia, usa 0.0, senão converte para float
-                regular_price_value = float(price_str) if price_str else 0.0 
-                # --- FIM DA CORREÇÃO ---
+                # Trata o preço regular que pode vir como None ou string vazia
+                regular_price_str = p.get("regular_price") 
+                regular_price_value = float(regular_price_str) if regular_price_str else 0.0 
                 
                 all_wc_products_data.append({
                     "id": p["id"],
@@ -70,7 +68,7 @@ def get_all_woocommerce_manageable_products():
                     "in_stock_wc": p.get("in_stock", False) # Salva o status de estoque atual da WC
                 })
             
-            print(f"   ✅ Página {page} da WooCommerce processada. Produtos encontrados com estoque gerenciado: {len(products)}")
+            print(f"    ✅ Página {page} da WooCommerce processada. Produtos encontrados com estoque gerenciado: {len(products)}")
             
             page += 1
             time.sleep(0.2) # Pequeno atraso para respeitar os limites de taxa da WC
@@ -145,12 +143,12 @@ def get_all_agis_products():
                 final_price = price / 0.80 if price > 0 else 0
                 all_agis_products_data.append({"sku": sku, "agis_price": final_price, "agis_stock": qty})
             
-            print(f"   ✅ Página {page} da Agis processada. Itens encontrados: {len(items)}")
+            print(f"    ✅ Página {page} da Agis processada. Itens encontrados: {len(items)}")
 
             total_count = data.get("total_count", 0)
             # Verifica se já buscamos tudo com base no total_count da API
             if total_count > 0 and len(all_agis_products_data) >= total_count:
-                print(f"   Total de produtos Agis a buscar atingido ({total_count}).")
+                print(f"    Total de produtos Agis a buscar atingido ({total_count}).")
                 break 
 
             page += 1
@@ -203,6 +201,9 @@ def update_products_in_bulk():
     updates_payload = {"update": []}
     products_to_update_count = 0
 
+    # Defina o limite de preço para a regra de filtro da Agis
+    PRICE_THRESHOLD = 400.00
+
     # Itera sobre o DataFrame mesclado para identificar as mudanças
     for index, row in df_merged.iterrows():
         product_id = row['id']
@@ -215,55 +216,85 @@ def update_products_in_bulk():
         agis_price_found = not pd.isna(row['agis_price'])
         agis_stock_found = not pd.isna(row['agis_stock'])
 
-        new_price = wc_price
-        new_stock = wc_stock
-        new_in_stock_status = wc_in_stock
+        new_price = wc_price # Inicializa com o preço atual da WC
+        new_stock = wc_stock # Inicializa com o estoque atual da WC
+        new_in_stock_status = wc_in_stock # Inicializa com o status de estoque atual da WC
         needs_update = False
 
         if agis_price_found and agis_stock_found:
-            # Produto encontrado na Agis, compare e prepare a atualização
-            agis_price = round(row['agis_price'], 2) # Arredonda para 2 casas
-            agis_stock = int(row['agis_stock'])
+            agis_price = round(row['agis_price'], 2) # Preço da Agis já com a margem aplicada
 
-            if agis_price != wc_price:
-                new_price = agis_price
-                needs_update = True
+            # --- NOVA LÓGICA PRINCIPAL APLICADA AQUI ---
+            if agis_price <= PRICE_THRESHOLD:
+                # Regra: Se o produto na Agis custa <= R$400, zerar estoque na WC e NÃO ATUALIZAR PREÇO.
+                print(f"    🚫 SKU '{sku}' (ID: {product_id}): Preço da Agis ({agis_price:.2f}) é <= R${PRICE_THRESHOLD:.2f}. PREÇO NÃO SERÁ ATUALIZADO.")
+                if wc_stock > 0 or wc_in_stock: # Só atualiza se o estoque atual não for já 0/fora de estoque
+                    new_stock = 0
+                    new_in_stock_status = False
+                    needs_update = True
+                    print(f"      -> ESTOQUE PROGRAMADO PARA 0 e 'fora de estoque' na WooCommerce.")
+                # O new_price permanece o wc_price (ou seja, não muda)
                 
-            if agis_stock != wc_stock:
-                new_stock = agis_stock
-                needs_update = True
+            else: # agis_price > PRICE_THRESHOLD (preço maior que R$400,00 na Agis)
+                # Regra: Se o produto na Agis custa > R$400,00, sincronizar preço e estoque normalmente.
+                if agis_price != wc_price:
+                    new_price = agis_price
+                    needs_update = True
+                    print(f"    ✏️ PREÇO Programado para SKU '{sku}' (ID: {product_id}): WC {wc_price:.2f} -> Agis {new_price:.2f}")
                 
-            # O status 'in_stock' deve refletir a nova quantidade de estoque (True se new_stock > 0, False caso contrário)
-            expected_in_stock_status = (new_stock > 0)
-            if expected_in_stock_status != wc_in_stock: # Se o status de estoque mudou
-                new_in_stock_status = expected_in_stock_status
-                needs_update = True
+                if agis_stock != wc_stock:
+                    new_stock = agis_stock
+                    needs_update = True
+                    print(f"    ✏️ ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_stock} -> Agis {new_stock}")
+                
+                # O status 'in_stock' deve refletir a nova quantidade de estoque (True se new_stock > 0, False caso contrário)
+                expected_in_stock_status = (new_stock > 0)
+                if expected_in_stock_status != wc_in_stock: # Se o status de estoque mudou
+                    new_in_stock_status = expected_in_stock_status
+                    needs_update = True
+                    print(f"    ✏️ STATUS ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_in_stock} -> Novo: {new_in_stock_status}")
 
         else:
             # SKU da WooCommerce não encontrado na Agis. Define estoque como 0 na WC.
-            print(f"   [!] SKU '{sku}' (ID: {product_id}) da WooCommerce NÃO encontrado na Agis.")
+            print(f"    [!] SKU '{sku}' (ID: {product_id}) da WooCommerce NÃO encontrado na Agis.")
             # Só atualiza se o estoque atual for > 0 ou se estiver marcado como 'em estoque'
             if wc_stock > 0 or wc_in_stock: 
                 new_stock = 0
                 new_in_stock_status = False # Marca como fora de estoque
                 needs_update = True
-                print(f"     -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce.")
+                print(f"      -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce para SKU '{sku}'.")
         
         if needs_update:
             products_to_update_count += 1
             update_data = {
                 "id": product_id,
-                "regular_price": str(f"{new_price:.2f}"), # Formata para string com 2 casas decimais
                 "stock_quantity": int(new_stock),
                 "manage_stock": True, # Mantém gerenciamento de estoque ativo
                 "in_stock": new_in_stock_status
             }
+            
+            # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
+            # E não estamos no cenário onde o preço da Agis é <= PRICE_THRESHOLD (onde o preço não deve ser atualizado)
+            if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
+                # Este if garante que o preço só é enviado se mudou ou se era 0 e o agis_price agora é > 400
+                update_data['regular_price'] = str(f"{new_price:.2f}")
+            else:
+                # Se o preço não foi alterado ou se a regra de <=400 da Agis o manteve inalterado,
+                # remove 'regular_price' do payload para não forçar uma atualização desnecessária ou incorreta.
+                update_data.pop('regular_price', None)
+
+
             updates_payload["update"].append(update_data)
-            print(f"   ✏️ Programado: SKU '{sku}' (ID: {product_id}) | Preço: WC {wc_price:.2f} -> Agis {new_price:.2f} | Estoque: WC {wc_stock} -> Agis {new_stock} | Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}")
+            
+            # Ajuste na mensagem de log para refletir se o preço foi atualizado ou não
+            price_log_str = f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}" if 'regular_price' in update_data else f"Preço WC: {wc_price:.2f} (permanece)"
+            stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
+            status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
+            print(f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{sku}' (ID: {product_id}) | {price_log_str} | {stock_log_str} | {status_log_str}")
 
 
     if not updates_payload["update"]:
-        print("\n✅ Nenhuma atualização de preço ou estoque necessária para os produtos gerenciados. Processo encerrado.")
+        print("\n✅ Nenhuma atualização de preço ou estoque necessária para os produtos gerenciados, considerando as regras de R$400. Processo encerrado.")
         return
 
     print(f"\n📦 Enviando {products_to_update_count} produtos em lote para atualização na WooCommerce...")
@@ -277,17 +308,17 @@ def update_products_in_bulk():
             response = wcapi.post("products/batch", {"update": batch})
 
             if response.status_code == 200:
-                print(f"   ✅ Lote de {len(batch)} itens enviado com sucesso.")
+                print(f"    ✅ Lote de {len(batch)} itens enviado com sucesso.")
             else:
                 # Loga mais detalhes do erro para depuração
-                print(f"   ❌ Erro ao enviar lote de atualizações ({len(batch)} itens): {response.status_code} - {response.text}")
+                print(f"    ❌ Erro ao enviar lote de atualizações ({len(batch)} itens): {response.status_code} - {response.text}")
                 error_response = response.json()
                 if 'data' in error_response and 'details' in error_response['data']:
-                    print(f"     Detalhes do erro: {error_response['data']['details']}")
+                    print(f"      Detalhes do erro: {error_response['data']['details']}")
                 # Pode haver erros específicos por item no lote
                 if 'errors' in error_response:
                     for error_item in error_response['errors']:
-                        print(f"       Erro no item {error_item.get('id')} ({error_item.get('code')}): {error_item.get('message')}")
+                        print(f"        Erro no item {error_item.get('id')} ({error_item.get('code')}): {error_item.get('message')}")
 
             time.sleep(1) # Pequeno atraso entre os lotes
         except requests.exceptions.Timeout:
