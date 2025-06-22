@@ -216,51 +216,50 @@ def update_products_in_bulk():
         agis_price_found = not pd.isna(row['agis_price'])
         agis_stock_found = not pd.isna(row['agis_stock'])
 
-        # --- CORREÇÃO: Inicializar agis_price e agis_stock antes do bloco condicional ---
-        agis_price = 0.0 # Valor padrão para caso não seja encontrado na Agis
-        agis_stock = 0   # Valor padrão para caso não seja encontrado na Agis
+        # --- CORREÇÃO AQUI: Garante que agis_price e agis_stock sempre tenham um valor numérico ---
+        # Se agis_price_found for True, usa o valor da linha, senão usa 0.0
+        agis_price = round(row['agis_price'], 2) if agis_price_found else 0.0 
+        # Se agis_stock_found for True, usa o valor da linha, senão usa 0
+        agis_stock = int(row['agis_stock']) if agis_stock_found else 0   
 
         new_price = wc_price # Inicializa com o preço atual da WC
         new_stock = wc_stock # Inicializa com o estoque atual da WC
         new_in_stock_status = wc_in_stock # Inicializa com o status de estoque atual da WC
         needs_update = False
 
-        if agis_price_found and agis_stock_found:
-            agis_price = round(row['agis_price'], 2) # Atribui o valor real da Agis
-            agis_stock = int(row['agis_stock'])     # Atribui o valor real da Agis
+        # --- Lógica principal para filtro de preço e estoque com base na Agis ---
+        if agis_price <= PRICE_THRESHOLD:
+            # Regra: Se o produto na Agis custa <= R$400, zerar estoque na WC e NÃO ATUALIZAR PREÇO.
+            print(f"    🚫 SKU '{sku}' (ID: {product_id}): Preço da Agis ({agis_price:.2f}) é <= R${PRICE_THRESHOLD:.2f}. PREÇO NÃO SERÁ ATUALIZADO.")
+            if wc_stock > 0 or wc_in_stock: # Só atualiza se o estoque atual não for já 0/fora de estoque
+                new_stock = 0
+                new_in_stock_status = False
+                needs_update = True
+                print(f"      -> ESTOQUE PROGRAMADO PARA 0 e 'fora de estoque' na WooCommerce.")
+            # O new_price permanece o wc_price (ou seja, não muda)
+            
+        else: # agis_price > PRICE_THRESHOLD (preço maior que R$400,00 na Agis)
+            # Regra: Se o produto na Agis custa > R$400,00, sincronizar preço e estoque normalmente.
+            if agis_price != wc_price:
+                new_price = agis_price
+                needs_update = True
+                print(f"    ✏️ PREÇO Programado para SKU '{sku}' (ID: {product_id}): WC {wc_price:.2f} -> Agis {new_price:.2f}")
+            
+            if agis_stock != wc_stock: # Esta era a linha 245 que estava dando erro
+                new_stock = agis_stock
+                needs_update = True
+                print(f"    ✏️ ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_stock} -> Agis {new_stock}")
+            
+            # O status 'in_stock' deve refletir a nova quantidade de estoque (True se new_stock > 0, False caso contrário)
+            expected_in_stock_status = (new_stock > 0)
+            if expected_in_stock_status != wc_in_stock: # Se o status de estoque mudou
+                new_in_stock_status = expected_in_stock_status
+                needs_update = True
+                print(f"    ✏️ STATUS ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_in_stock} -> Novo: {new_in_stock_status}")
 
-            # --- Lógica principal para filtro de preço e estoque com base na Agis ---
-            if agis_price <= PRICE_THRESHOLD:
-                # Regra: Se o produto na Agis custa <= R$400, zerar estoque na WC e NÃO ATUALIZAR PREÇO.
-                print(f"    🚫 SKU '{sku}' (ID: {product_id}): Preço da Agis ({agis_price:.2f}) é <= R${PRICE_THRESHOLD:.2f}. PREÇO NÃO SERÁ ATUALIZADO.")
-                if wc_stock > 0 or wc_in_stock: # Só atualiza se o estoque atual não for já 0/fora de estoque
-                    new_stock = 0
-                    new_in_stock_status = False
-                    needs_update = True
-                    print(f"      -> ESTOQUE PROGRAMADO PARA 0 e 'fora de estoque' na WooCommerce.")
-                # O new_price permanece o wc_price (ou seja, não muda)
-                
-            else: # agis_price > PRICE_THRESHOLD (preço maior que R$400,00 na Agis)
-                # Regra: Se o produto na Agis custa > R$400,00, sincronizar preço e estoque normalmente.
-                if agis_price != wc_price:
-                    new_price = agis_price
-                    needs_update = True
-                    print(f"    ✏️ PREÇO Programado para SKU '{sku}' (ID: {product_id}): WC {wc_price:.2f} -> Agis {new_price:.2f}")
-                
-                if agis_stock != wc_stock:
-                    new_stock = agis_stock
-                    needs_update = True
-                    print(f"    ✏️ ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_stock} -> Agis {new_stock}")
-                
-                # O status 'in_stock' deve refletir a nova quantidade de estoque (True se new_stock > 0, False caso contrário)
-                expected_in_stock_status = (new_stock > 0)
-                if expected_in_stock_status != wc_in_stock: # Se o status de estoque mudou
-                    new_in_stock_status = expected_in_stock_status
-                    needs_update = True
-                    print(f"    ✏️ STATUS ESTOQUE Programado para SKU '{sku}' (ID: {product_id}): WC {wc_in_stock} -> Novo: {new_in_stock_status}")
-
-        else:
-            # SKU da WooCommerce não encontrado na Agis. Define estoque como 0 na WC.
+        # Se o SKU da WooCommerce não foi encontrado na Agis (ambos agis_price_found e agis_stock_found são False)
+        # Este 'else' trata os casos onde o produto não existe na Agis
+        if not agis_price_found and not agis_stock_found: 
             print(f"    [!] SKU '{sku}' (ID: {product_id}) da WooCommerce NÃO encontrado na Agis.")
             # Só atualiza se o estoque atual for > 0 ou se estiver marcado como 'em estoque'
             if wc_stock > 0 or wc_in_stock: 
@@ -281,6 +280,7 @@ def update_products_in_bulk():
             # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
             # E não estamos no cenário onde o preço da Agis é <= PRICE_THRESHOLD (onde o preço não deve ser atualizado)
             # ou se era 0 na WC e agora o Agis_price > 400
+            # Adicionei uma verificação para garantir que agis_price_found seja True para esta regra
             if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
                 update_data['regular_price'] = str(f"{new_price:.2f}")
             else:
