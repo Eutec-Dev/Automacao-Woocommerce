@@ -272,38 +272,35 @@ def update_products_in_bulk():
     # Verifica se o produto tem gerenciamento de estoque ativo
     if not row.get("manage_stock", False):
         print(f"    ⏭️ SKU '{row['sku']}' (ID: {row['id']}) ignorado: gerenciamento de estoque desativado na WooCommerce.")
-        continue  # Pula para o próximo produto
+        continue  # Agora está dentro do loop, sem erro
 
+    if needs_update:
+        products_to_update_count += 1
+        update_data = {
+            "id": row['id'],
+            "stock_quantity": int(new_stock),
+            "manage_stock": True,
+            "in_stock": new_in_stock_status
+        }
 
-if needs_update:
-    products_to_update_count += 1
-    update_data = {
-        "id": product_id,
-        "stock_quantity": int(new_stock),
-        "manage_stock": True,  # Só incluímos porque sabemos que já está ativado
-        "in_stock": new_in_stock_status
-    }
+        if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
+            update_data['regular_price'] = str(f"{new_price:.2f}")
+        else:
+            update_data.pop('regular_price', None)
 
-    # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
-    if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
-        update_data['regular_price'] = str(f"{new_price:.2f}")
-    else:
-        update_data.pop('regular_price', None)
+        updates_payload["update"].append(update_data)
 
-    updates_payload["update"].append(update_data)
-
-    # Ajuste na mensagem de log para refletir se o preço foi atualizado ou não
-    price_log_str = (
-        f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}"
-        if 'regular_price' in update_data
-        else f"Preço WC: {wc_price:.2f} (permanece)"
-    )
-    stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
-    status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
-    print(
-        f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{sku}' (ID: {product_id}) | "
-        f"{price_log_str} | {stock_log_str} | {status_log_str}"
-    )
+        price_log_str = (
+            f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}"
+            if 'regular_price' in update_data
+            else f"Preço WC: {wc_price:.2f} (permanece)"
+        )
+        stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
+        status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
+        print(
+            f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{row['sku']}' (ID: {row['id']}) | "
+            f"{price_log_str} | {stock_log_str} | {status_log_str}"
+        )
 
 
     if not updates_payload["update"]:
