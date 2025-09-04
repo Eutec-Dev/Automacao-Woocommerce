@@ -268,7 +268,8 @@ def update_products_in_bulk():
                 needs_update = True
                 print(f"      -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce para SKU '{sku}'.")
         
-        if not row.get("manage_stock", False):
+       # Verifica se o produto tem gerenciamento de estoque ativo
+if not row.get("manage_stock", False):
     print(f"    ⏭️ SKU '{sku}' (ID: {product_id}) ignorado: gerenciamento de estoque desativado na WooCommerce.")
     continue  # Pula para o próximo produto
 
@@ -277,11 +278,11 @@ if needs_update:
     update_data = {
         "id": product_id,
         "stock_quantity": int(new_stock),
-        "manage_stock": True,  # Só chega aqui se já estiver ativado
+        "manage_stock": True,  # Só incluímos porque sabemos que já está ativado
         "in_stock": new_in_stock_status
     }
 
-    # Adiciona 'regular_price' ao payload SOMENTE se necessário
+    # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
     if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
         update_data['regular_price'] = str(f"{new_price:.2f}")
     else:
@@ -289,10 +290,18 @@ if needs_update:
 
     updates_payload["update"].append(update_data)
 
-    price_log_str = f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}" if 'regular_price' in update_data else f"Preço WC: {wc_price:.2f} (permanece)"
+    # Ajuste na mensagem de log para refletir se o preço foi atualizado ou não
+    price_log_str = (
+        f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}"
+        if 'regular_price' in update_data
+        else f"Preço WC: {wc_price:.2f} (permanece)"
+    )
     stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
     status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
-    print(f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{sku}' (ID: {product_id}) | {price_log_str} | {stock_log_str} | {status_log_str}")
+    print(
+        f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{sku}' (ID: {product_id}) | "
+        f"{price_log_str} | {stock_log_str} | {status_log_str}"
+    )
 
 
     if not updates_payload["update"]:
