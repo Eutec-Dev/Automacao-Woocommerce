@@ -267,40 +267,42 @@ def update_products_in_bulk():
                 new_in_stock_status = False # Marca como fora de estoque
                 needs_update = True
                 print(f"      -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce para SKU '{sku}'.")
+                # ⚠️ Verifica se o gerenciamento de estoque está desativado
+        if not wc_manage_stock:
+            print(f"    ⏭️ SKU '{sku}' (ID: {product_id}) está com gerenciamento de estoque DESATIVADO. Ignorando atualização.")
+            continue  # pula para o próximo produto
         
-   for index, row in df_merged.iterrows():
-    # Verifica se o produto tem gerenciamento de estoque ativo
-    if not row.get("manage_stock", False):
-        print(f"    ⏭️ SKU '{row['sku']}' (ID: {row['id']}) ignorado: gerenciamento de estoque desativado na WooCommerce.")
-        continue  # Agora está dentro do loop, sem erro
+        if needs_update:
+            products_to_update_count += 1
+            update_data = {
+                "id": product_id,
+                "stock_quantity": int(new_stock),
+                "in_stock": new_in_stock_status
+            }
+            # Só adiciona 'manage_stock' se já estiver ativo
+            if wc_manage_stock:
+                update_data["manage_stock"] = True
 
-    if needs_update:
-        products_to_update_count += 1
-        update_data = {
-            "id": row['id'],
-            "stock_quantity": int(new_stock),
-            "manage_stock": True,
-            "in_stock": new_in_stock_status
-        }
+            
+            # Adiciona 'regular_price' ao payload SOMENTE se 'new_price' foi de fato alterado
+            # E não estamos no cenário onde o preço da Agis é <= PRICE_THRESHOLD (onde o preço não deve ser atualizado)
+            # ou se era 0 na WC e agora o Agis_price > 400
+            # Adicionei uma verificação para garantir que agis_price_found seja True para esta regra
+            if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
+                update_data['regular_price'] = str(f"{new_price:.2f}")
+            else:
+                # Se o preço não foi alterado ou se a regra de <=400 da Agis o manteve inalterado,
+                # remove 'regular_price' do payload para não forçar uma atualização desnecessária ou incorreta.
+                update_data.pop('regular_price', None)
 
-        if new_price != wc_price or (agis_price_found and agis_price > PRICE_THRESHOLD and wc_price == 0.0):
-            update_data['regular_price'] = str(f"{new_price:.2f}")
-        else:
-            update_data.pop('regular_price', None)
 
-        updates_payload["update"].append(update_data)
-
-        price_log_str = (
-            f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}"
-            if 'regular_price' in update_data
-            else f"Preço WC: {wc_price:.2f} (permanece)"
-        )
-        stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
-        status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
-        print(
-            f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{row['sku']}' (ID: {row['id']}) | "
-            f"{price_log_str} | {stock_log_str} | {status_log_str}"
-        )
+            updates_payload["update"].append(update_data)
+            
+            # Ajuste na mensagem de log para refletir se o preço foi atualizado ou não
+            price_log_str = f"Preço: WC {wc_price:.2f} -> Agis {new_price:.2f}" if 'regular_price' in update_data else f"Preço WC: {wc_price:.2f} (permanece)"
+            stock_log_str = f"Estoque: WC {wc_stock} -> Agis {new_stock}"
+            status_log_str = f"Em Estoque WC: {wc_in_stock} -> Novo: {new_in_stock_status}"
+            print(f"    ✅ PROGRAMADO PARA ATUALIZAÇÃO: SKU '{sku}' (ID: {product_id}) | {price_log_str} | {stock_log_str} | {status_log_str}")
 
 
     if not updates_payload["update"]:
