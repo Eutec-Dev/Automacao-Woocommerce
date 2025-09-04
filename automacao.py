@@ -211,7 +211,7 @@ def update_products_in_bulk():
         wc_price = round(row['regular_price_wc'], 2) # Arredonda para 2 casas para comparação
         wc_stock = int(row['stock_quantity_wc'])
         wc_in_stock = row['in_stock_wc']
-        wc_manage_stock = row.get('manage_stock_wc', False)
+        wc_manage_stock = row['manage_stock_wc']
         
         # O Pandas usa pd.isna() para verificar valores ausentes (NaN) após um left merge
         agis_price_found = not pd.isna(row['agis_price'])
