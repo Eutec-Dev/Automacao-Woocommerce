@@ -268,10 +268,12 @@ def update_products_in_bulk():
                 needs_update = True
                 print(f"      -> Ajustando estoque para 0 e 'fora de estoque' na WooCommerce para SKU '{sku}'.")
         
-       # Verifica se o produto tem gerenciamento de estoque ativo
-if not row.get("manage_stock", False):
-    print(f"    ⏭️ SKU '{sku}' (ID: {product_id}) ignorado: gerenciamento de estoque desativado na WooCommerce.")
-    continue  # Pula para o próximo produto
+   for index, row in df_merged.iterrows():
+    # Verifica se o produto tem gerenciamento de estoque ativo
+    if not row.get("manage_stock", False):
+        print(f"    ⏭️ SKU '{row['sku']}' (ID: {row['id']}) ignorado: gerenciamento de estoque desativado na WooCommerce.")
+        continue  # Pula para o próximo produto
+
 
 if needs_update:
     products_to_update_count += 1
