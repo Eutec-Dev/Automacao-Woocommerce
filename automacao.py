@@ -61,13 +61,13 @@ def get_all_woocommerce_manageable_products():
                 regular_price_value = float(regular_price_str) if regular_price_str else 0.0 
                 
                 all_wc_products_data.append({
-    "id": p["id"],
-    "sku": str(p.get("sku", "")).strip(),  # Garante que SKU é string e limpo
-    "regular_price_wc": regular_price_value,
-    "stock_quantity_wc": int(stock_qty),
-    "in_stock_wc": p.get("in_stock", False),  # Salva o status de estoque atual da WC
-    "manage_stock_wc": p.get("manage_stock", False)  # ✅ Adiciona o campo que faltava
-})
+                "id": p["id"],
+                "sku": str(p.get("sku", "")).strip(),  # Garante que SKU é string e limpo
+                "regular_price_wc": regular_price_value,
+                "stock_quantity_wc": int(stock_qty),
+                "in_stock_wc": p.get("in_stock", False),  # Salva o status de estoque atual da WC
+                "manage_stock_wc": p.get("manage_stock", False)  # ✅ Adiciona o campo que faltava
+            })
             
             print(f"    ✅ Página {page} da WooCommerce processada. Produtos encontrados com estoque gerenciado: {len(products)}")
             
