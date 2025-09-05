@@ -141,7 +141,7 @@ def get_all_agis_products():
                             price = current_price_agis 
 
                 # Aplica a margem se o preço for válido
-                final_price = price / 0.80 if price > 0 else 0
+                final_price = price / 0.76 if price > 0 else 0
                 all_agis_products_data.append({"sku": sku, "agis_price": final_price, "agis_stock": qty})
             
             print(f"    ✅ Página {page} da Agis processada. Itens encontrados: {len(items)}")
