@@ -110,6 +110,10 @@ def get_all_agis_products():
         }
         try:
             response = requests.get(API_URL, headers=HEADERS, params=params, timeout=30) 
+            # Verifica se houve erro crítico e encerra o script
+            if response.status_code in [401, 403, 503]:
+    print(f"❌ ERRO CRÍTICO ({response.status_code}) ao acessar a API da Agis. Encerrando o processo.")
+    exit(1) # Encerra o script com código de erro
             
             if response.status_code != 200:
                 print(f"❌ Erro ao buscar produtos da Agis (Página {page}): {response.status_code} - {response.text}")
