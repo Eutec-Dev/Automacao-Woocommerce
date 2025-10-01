@@ -100,7 +100,7 @@ def get_all_agis_products():
     """
     all_agis_products_data = []
     page = 1
-    page_size = 1000 # O máximo que a Agis API pode retornar por página
+    page_size = 1000  # O máximo que a Agis API pode retornar por página
 
     print("🔧 Buscando todos os produtos da Agis...")
     while True:
@@ -109,11 +109,11 @@ def get_all_agis_products():
             "searchCriteria[pageSize]": page_size
         }
         try:
-            response = requests.get(API_URL, headers=HEADERS, params=params, timeout=30) 
+            response = requests.get(API_URL, headers=HEADERS, params=params, timeout=30)
             # Verifica se houve erro crítico e encerra o script
-           if response.status_code in [401, 403, 503]:
+            if response.status_code in [401, 403, 503]:
                 print(f"❌ ERRO CRÍTICO ({response.status_code}) ao acessar a API da Agis. Encerrando o processo.")
-                exit(1) # Encerra o script com código de erro
+                exit(1)  # Encerra o script com código de erro
             
             if response.status_code != 200:
                 print(f"❌ Erro ao buscar produtos da Agis (Página {page}): {response.status_code} - {response.text}")
