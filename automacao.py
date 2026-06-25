@@ -16,7 +16,7 @@ wcapi = API(
 
 # ─── Configuração da API Agis ────────────────────────────────────────────────
 API_URL = "https://vendas.agis.com.br/rest/all/V1/agis/reseller/product/list"
-TOKEN = ""
+TOKEN = "yc217iuslnxp4v7v3j2y7i96irr236sd"
 HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {TOKEN}",
