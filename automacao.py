@@ -8,8 +8,8 @@ import urllib.parse
 # ─── Configuração da API WooCommerce ────────────────────────────────────────
 wcapi = API(
     url="https://eutec.com.br",
-    consumer_key="",
-    consumer_secret="",
+    consumer_key="ck_5506e564a1f28a33558e9da73b33823db3c15510",
+    consumer_secret="cs_07393e037d36912181839d01905909d568448350",
     version="wc/v3",
     timeout=30
 )
