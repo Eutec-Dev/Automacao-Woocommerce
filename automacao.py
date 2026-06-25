@@ -4,19 +4,20 @@ from woocommerce import API
 import time
 import sys
 import urllib.parse
+import os
 
 # ─── Configuração da API WooCommerce ────────────────────────────────────────
 wcapi = API(
     url="https://eutec.com.br",
-    consumer_key="ck_5506e564a1f28a33558e9da73b33823db3c15510",
-    consumer_secret="cs_07393e037d36912181839d01905909d568448350",
+    consumer_key=os.environ["WC_CONSUMER_KEY"],
+    consumer_secret=os.environ["WC_CONSUMER_SECRET"],
     version="wc/v3",
     timeout=30
 )
 
 # ─── Configuração da API Agis ────────────────────────────────────────────────
 API_URL = "https://vendas.agis.com.br/rest/all/V1/agis/reseller/product/list"
-TOKEN = "yc217iuslnxp4v7v3j2y7i96irr236sd"
+TOKEN = os.environ["AGIS_TOKEN"]
 HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {TOKEN}",
