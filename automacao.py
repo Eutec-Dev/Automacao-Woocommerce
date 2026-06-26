@@ -268,7 +268,7 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
                         qty += s.get("qty", 0)
                         raw = str(s.get("price", 0)).replace(",", ".")
                         p = float(raw) if raw.replace(".", "", 1).isdigit() else 0.0
-                        if p > 0:
+                        if p > 0 and price == 0.0:
                             price = p
 
                 # Aplica a margem do Acyr
