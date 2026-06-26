@@ -5,7 +5,8 @@ import time
 import sys
 import urllib.parse
 import os
-
+import sys
+sys.stdout.reconfigure(line_buffering=True)
 # ─── Configuração da API WooCommerce ────────────────────────────────────────
 wcapi = API(
     url="https://eutec.com.br",
