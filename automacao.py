@@ -255,6 +255,17 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
             print(f"    ⚠️  Lote {batch_num}: nenhum item retornado (404).")
         else:
             items = data.get("items", [])
+            
+            if batch_num == 1:
+                print(f"    🔍 DEBUG chaves da resposta : {list(data.keys())}")
+                print(f"    🔍 DEBUG total_count        : {data.get('total_count', 'N/A')}")
+                print(f"    🔍 DEBUG items count        : {len(items)}")
+                print(f"    🔍 DEBUG SKUs enviados (5)  : {batch[:5]}")
+                if items:
+                    print(f"    🔍 DEBUG primeiro item keys : {list(items[0].keys())}")
+                    print(f"    🔍 DEBUG primeiro item      : {str(items[0])[:800]}")
+                else:
+                    print(f"    🔍 DEBUG body completo      : {str(data)[:800]}")
             found = 0
             for item in items:
                 sku = str(item.get("sku", "")).strip().upper()
