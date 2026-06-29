@@ -31,7 +31,7 @@ MAX_CONSECUTIVE_ERRS = 5      # Circuit breaker: erros seguidos
 BACKOFF_BASE         = 2      # Backoff exponencial: 2s, 4s, 8s...
 WC_PAGE_DELAY        = 0.3    # Delay entre páginas da WooCommerce
 AGIS_BATCH_DELAY     = 3.0    # Delay entre lotes de SKUs enviados à Agis
-AGIS_SKU_BATCH_SIZE  = 25     # Quantidade de SKUs por requisição à Agis
+AGIS_SKU_BATCH_SIZE  = 50     # Quantidade de SKUs por requisição à Agis
 MARGIN_DIVISOR       = 0.97   # Margem do Acyr: preço_agis / 0.97
 WAREHOUSES           = ["007", "004"]  # Armazéns físicos considerados
 
@@ -244,7 +244,7 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
             "searchCriteria[filterGroups][0][filters][0][field]":         "SKU",
             "searchCriteria[filterGroups][0][filters][0][value]":         skus_value,
             "searchCriteria[filterGroups][0][filters][0][conditionType]": "in",
-            "searchCriteria[pageSize]":                                    AGIS_SKU_BATCH_SIZE,
+            "searchCriteria[pageSize]":                                    200,
             "searchCriteria[currentPage]":                                 1,
         }
 
