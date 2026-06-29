@@ -244,7 +244,7 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
             "searchCriteria[filterGroups][0][filters][0][field]":         "SKU",
             "searchCriteria[filterGroups][0][filters][0][value]":         skus_value,
             "searchCriteria[filterGroups][0][filters][0][conditionType]": "in",
-            "searchCriteria[pageSize]":                                    200,
+            "searchCriteria[pageSize]":                                    500,
             "searchCriteria[currentPage]":                                 1,
         }
 
