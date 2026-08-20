@@ -32,7 +32,7 @@ BACKOFF_BASE         = 2      # Backoff exponencial: 2s, 4s, 8s...
 WC_PAGE_DELAY        = 0.3    # Delay entre páginas da WooCommerce
 AGIS_BATCH_DELAY     = 3.0    # Delay entre lotes de SKUs enviados à Agis
 AGIS_SKU_BATCH_SIZE  = 50     # Quantidade de SKUs por requisição à Agis
-MARGIN_DIVISOR       = 0.97   # Margem do Acyr: preço_agis / 0.97
+MARGIN_DIVISOR       = 0.96   # Margem do Acyr: preço_agis / 0.96
 WAREHOUSES           = ["007", "004"]  # Armazéns físicos considerados
 
 
@@ -302,7 +302,7 @@ def build_update_payload(df_wc: pd.DataFrame, agis_data: dict) -> list:
     Regras:
     - SKU não encontrado na Agis → zera estoque na WC
     - SKU encontrado, estoque ou preço diferente → atualiza
-    - Preço final = agis_price (já com margem / 0.97 aplicada)
+    - Preço final = agis_price (já com margem / 0.96 aplicada)
     """
     updates = []
 
