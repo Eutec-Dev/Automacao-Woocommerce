@@ -3,10 +3,10 @@ import pandas as pd
 from woocommerce import API
 import time
 import sys
-import urllib.parse
 import os
-import sys
+
 sys.stdout.reconfigure(line_buffering=True)
+
 # ─── Configuração da API WooCommerce ────────────────────────────────────────
 wcapi = API(
     url="https://eutec.com.br",
@@ -33,7 +33,10 @@ WC_PAGE_DELAY        = 0.3    # Delay entre páginas da WooCommerce
 AGIS_BATCH_DELAY     = 3.0    # Delay entre lotes de SKUs enviados à Agis
 AGIS_SKU_BATCH_SIZE  = 50     # Quantidade de SKUs por requisição à Agis
 MARGIN_DIVISOR       = 0.96   # Margem do Acyr: preço_agis / 0.96
-WAREHOUSES           = ["007", "004"]  # Armazéns físicos considerados
+WAREHOUSES           = ["007", "004"]  # Armazéns considerados, em ORDEM DE PRIORIDADE de preço
+MIN_FOUND_RATIO      = 0.05   # Trava de sanidade: aborta se a Agis devolver < 5% dos SKUs
+DRY_RUN              = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
+WATCH_SKUS           = {s.strip().upper() for s in os.environ.get("WATCH_SKUS", "").split(",") if s.strip()}
 
 
 # ─── Circuit Breaker ─────────────────────────────────────────────────────────
@@ -95,11 +98,6 @@ def handle_http_error(status_code: int, resp_headers: dict, source: str, attempt
 
 # ─── Requisição com retry ─────────────────────────────────────────────────────
 def safe_get(url: str, params: dict, source: str) -> dict | None:
-    """
-    Faz GET com backoff exponencial e limite de tentativas.
-    Retorna o JSON parseado ou None se 404 (sem dados).
-    Aborta com sys.exit em erros críticos.
-    """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = requests.get(url, headers=HEADERS, params=params, timeout=30)
@@ -109,10 +107,8 @@ def safe_get(url: str, params: dict, source: str) -> dict | None:
                 return response.json()
 
             action = handle_http_error(response.status_code, response.headers, source, attempt)
-
             if action == "not_found":
                 return None
-            # rate_limit e retry: continua o loop
 
         except requests.exceptions.Timeout:
             wait = BACKOFF_BASE ** attempt
@@ -134,13 +130,26 @@ def safe_get(url: str, params: dict, source: str) -> dict | None:
     sys.exit(1)
 
 
+# ─── Helpers de conversão ────────────────────────────────────────────────────
+def to_float(value) -> float:
+    """Converte preço da Agis/WC para float sem quebrar com vírgula, vazio ou None."""
+    if value is None:
+        return 0.0
+    try:
+        return float(str(value).strip().replace(",", "."))
+    except ValueError:
+        return 0.0
+
+
+def to_int(value) -> int:
+    try:
+        return int(float(value or 0))
+    except (ValueError, TypeError):
+        return 0
+
+
 # ─── PASSO 1: Busca produtos da EUTEC (WooCommerce) ─────────────────────────
 def get_eutec_products() -> pd.DataFrame:
-    """
-    Busca todos os produtos publicados com manage_stock=true na EUTEC.
-    Retorna DataFrame com: id, sku, regular_price_wc, stock_quantity_wc,
-                           in_stock_wc, manage_stock_wc
-    """
     all_products = []
     page = 1
 
@@ -158,7 +167,6 @@ def get_eutec_products() -> pd.DataFrame:
                     params={
                         "per_page": 100,
                         "page": page,
-                        "manage_stock": "true",
                         "status": "publish"
                     }
                 )
@@ -173,16 +181,17 @@ def get_eutec_products() -> pd.DataFrame:
                     for p in products:
                         sku = str(p.get("sku", "")).strip()
                         if not sku:
-                            continue  # SKU vazio não pode ser buscado na Agis
-                        stock_qty = p.get("stock_quantity") or 0
-                        price_str = p.get("regular_price") or "0"
+                            continue
+                        # wc/v3 não aceita filtro manage_stock na listagem → filtra aqui
+                        if not p.get("manage_stock", False):
+                            continue
                         all_products.append({
-                            "id":               p["id"],
-                            "sku":              sku,
-                            "regular_price_wc": float(price_str) if price_str else 0.0,
-                            "stock_quantity_wc":int(stock_qty),
-                            "in_stock_wc":      p.get("in_stock", False),
-                            "manage_stock_wc":  p.get("manage_stock", False)
+                            "id":                p["id"],
+                            "sku":               sku,
+                            "regular_price_wc":  to_float(p.get("regular_price")),
+                            "stock_quantity_wc": to_int(p.get("stock_quantity")),
+                            # FIX: wc/v3 usa stock_status, não in_stock
+                            "in_stock_wc":       p.get("stock_status") == "instock",
                         })
 
                     print(f"    ✅ Página {page}: {len(products)} produtos")
@@ -218,17 +227,37 @@ def get_eutec_products() -> pd.DataFrame:
 
 
 # ─── PASSO 2: Busca na Agis SOMENTE os SKUs da EUTEC ────────────────────────
-def get_agis_data_for_skus(skus: list[str]) -> dict:
+def extract_agis_stock_price(item: dict) -> tuple[int, float]:
     """
-    Busca na API da Agis apenas os SKUs presentes na EUTEC.
-    Envia em lotes de AGIS_SKU_BATCH_SIZE usando o filtro 'in' do searchCriteria.
-    Retorna dict: { sku_upper: {"agis_price": float, "agis_stock": int} }
+    Soma o estoque dos armazéns em WAREHOUSES e pega o preço seguindo a
+    ORDEM DE PRIORIDADE de WAREHOUSES (007 antes de 004), só de armazém com preço > 0.
+    """
+    by_wh = {}
+    for s in item.get("stock", []) or []:
+        wh = str(s.get("warehouse", "")).strip()
+        by_wh[wh] = {"qty": to_int(s.get("qty")), "price": to_float(s.get("price"))}
 
-    Estratégia de lote:
-    - Usa conditionType 'in' com múltiplos SKUs separados por vírgula.
-    - Isso é 1 requisição por lote (ex: 50 SKUs = 1 req), muito mais eficiente
-      do que 1 requisição por SKU e sem varrer o catálogo inteiro da Agis.
-    """
+    qty = sum(by_wh.get(wh, {}).get("qty", 0) for wh in WAREHOUSES)
+
+    price = 0.0
+    # 1ª tentativa: armazém prioritário que tenha estoque e preço
+    for wh in WAREHOUSES:
+        d = by_wh.get(wh)
+        if d and d["qty"] > 0 and d["price"] > 0:
+            price = d["price"]
+            break
+    # 2ª tentativa: qualquer armazém considerado com preço, mesmo sem estoque
+    if price == 0.0:
+        for wh in WAREHOUSES:
+            d = by_wh.get(wh)
+            if d and d["price"] > 0:
+                price = d["price"]
+                break
+
+    return qty, price
+
+
+def get_agis_data_for_skus(skus: list[str]) -> dict:
     result = {}
     total = len(skus)
     batches = [skus[i:i + AGIS_SKU_BATCH_SIZE] for i in range(0, total, AGIS_SKU_BATCH_SIZE)]
@@ -238,56 +267,35 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
     print("─" * 60)
 
     for batch_num, batch in enumerate(batches, 1):
-        skus_value = ",".join(batch)
-
         params = {
             "searchCriteria[filterGroups][0][filters][0][field]":         "SKU",
-            "searchCriteria[filterGroups][0][filters][0][value]":         skus_value,
+            "searchCriteria[filterGroups][0][filters][0][value]":         ",".join(batch),
             "searchCriteria[filterGroups][0][filters][0][conditionType]": "in",
             "searchCriteria[pageSize]":                                    500,
             "searchCriteria[currentPage]":                                 1,
         }
 
-        print(f"    📡 Lote {batch_num}/{len(batches)}: {len(batch)} SKUs...")
         data = safe_get(API_URL, params, f"Agis lote {batch_num}")
 
         if data is None:
-            print(f"    ⚠️  Lote {batch_num}: nenhum item retornado (404).")
+            print(f"    ⚠️  Lote {batch_num}/{len(batches)}: nenhum item retornado (404).")
         else:
-            items = data.get("items", [])
-            
-            if batch_num == 1:
-                print(f"    🔍 DEBUG chaves da resposta : {list(data.keys())}")
-                print(f"    🔍 DEBUG total_count        : {data.get('total_count', 'N/A')}")
-                print(f"    🔍 DEBUG items count        : {len(items)}")
-                print(f"    🔍 DEBUG SKUs enviados (5)  : {batch[:5]}")
-                if items:
-                    print(f"    🔍 DEBUG primeiro item keys : {list(items[0].keys())}")
-                    print(f"    🔍 DEBUG primeiro item      : {str(items[0])[:800]}")
-                else:
-                    print(f"    🔍 DEBUG body completo      : {str(data)[:800]}")
+            items = data.get("items", []) or []
             found = 0
             for item in items:
                 sku = str(item.get("sku", "")).strip().upper()
                 if not sku:
                     continue
 
-                qty = 0
-                price = 0.0
-                for s in item.get("stock", []):
-                    if s.get("warehouse") in WAREHOUSES:
-                        qty += s.get("qty", 0)
-                        raw = str(s.get("price", 0)).replace(",", ".")
-                        p = float(raw) if raw.replace(".", "", 1).isdigit() else 0.0
-                        if p > 0 and price == 0.0:
-                            price = p
-
-                # Aplica a margem do Acyr
+                qty, price = extract_agis_stock_price(item)
                 final_price = round(price / MARGIN_DIVISOR, 2) if price > 0 else 0.0
-                result[sku] = {"agis_price": final_price, "agis_stock": int(qty)}
+                result[sku] = {"agis_price": final_price, "agis_stock": qty, "agis_raw_price": price}
                 found += 1
 
-            print(f"    ✅ Lote {batch_num}: {found} produtos encontrados na Agis.")
+                if sku in WATCH_SKUS:
+                    print(f"    👀 WATCH {sku}: stock={item.get('stock')} → qty={qty}, preço={price} → final={final_price}")
+
+            print(f"    ✅ Lote {batch_num}/{len(batches)}: {found}/{len(batch)} SKUs encontrados na Agis.")
 
         time.sleep(AGIS_BATCH_DELAY)
 
@@ -297,92 +305,81 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
 
 # ─── PASSO 3: Compara e monta payload de atualização ────────────────────────
 def build_update_payload(df_wc: pd.DataFrame, agis_data: dict) -> list:
-    """
-    Compara dados da WooCommerce com os da Agis e monta lista de atualizações.
-    Regras:
-    - SKU não encontrado na Agis → zera estoque na WC
-    - SKU encontrado, estoque ou preço diferente → atualiza
-    - Preço final = agis_price (já com margem / 0.96 aplicada)
-    """
     updates = []
+    stats = {"preco": 0, "estoque": 0, "status": 0, "zerados": 0}
 
     print("─" * 60)
     print("📊 PASSO 3: Comparando dados e montando atualizações...")
     print("─" * 60)
 
     for _, row in df_wc.iterrows():
-        product_id      = row["id"]
-        sku             = row["sku"]
-        wc_price        = round(row["regular_price_wc"], 2)
-        wc_stock        = int(row["stock_quantity_wc"])
-        wc_in_stock     = row["in_stock_wc"]
-        wc_manage_stock = row["manage_stock_wc"]
-
-        if not wc_manage_stock:
-            print(f"    ⏭️  SKU '{sku}' sem gerenciamento de estoque. Ignorando.")
-            continue
+        product_id  = int(row["id"])
+        sku         = row["sku"]
+        wc_price    = round(float(row["regular_price_wc"]), 2)
+        wc_stock    = int(row["stock_quantity_wc"])
+        wc_in_stock = bool(row["in_stock_wc"])
 
         agis = agis_data.get(sku.upper())
 
-        new_price      = wc_price
-        new_stock      = wc_stock
-        new_in_stock   = wc_in_stock
-        needs_update   = False
-        price_changed  = False
+        new_price     = wc_price
+        new_stock     = wc_stock
+        price_changed = False
 
         if agis is None:
-            # ── Produto não existe na Agis → zera estoque ──
-            print(f"    [!] SKU '{sku}' (ID:{product_id}) não encontrado na Agis → zerando estoque.")
-            if wc_stock > 0 or wc_in_stock:
-                new_stock    = 0
-                new_in_stock = False
-                needs_update = True
-
+            if wc_stock != 0 or wc_in_stock:
+                new_stock = 0
+                stats["zerados"] += 1
+                print(f"    [!] SKU '{sku}' (ID:{product_id}) não encontrado na Agis → zerando estoque.")
         else:
             agis_price = agis["agis_price"]
             agis_stock = agis["agis_stock"]
 
-            # Preço
-            if agis_price > 0 and agis_price != wc_price:
-                new_price    = agis_price
-                needs_update = True
+            # Preço: compara em centavos para evitar falso "diferente" por float
+            if agis_price > 0 and round(agis_price * 100) != round(wc_price * 100):
+                new_price     = agis_price
                 price_changed = True
+                stats["preco"] += 1
                 print(f"    ✏️  PREÇO '{sku}' (ID:{product_id}): R${wc_price:.2f} → R${new_price:.2f}")
 
-            # Estoque
             if agis_stock != wc_stock:
-                new_stock    = agis_stock
-                needs_update = True
+                new_stock = agis_stock
+                stats["estoque"] += 1
                 print(f"    ✏️  ESTOQUE '{sku}' (ID:{product_id}): {wc_stock} → {new_stock}")
 
-            # Status in_stock
-            expected_in_stock = new_stock > 0
-            if expected_in_stock != wc_in_stock:
-                new_in_stock = expected_in_stock
-                needs_update = True
-                print(f"    ✏️  STATUS '{sku}' (ID:{product_id}): {wc_in_stock} → {new_in_stock}")
+            if agis_price == 0 and agis_stock > 0:
+                print(f"    ⚠️  SKU '{sku}' (ID:{product_id}) tem estoque {agis_stock} mas preço 0 na Agis — preço mantido.")
 
-        if needs_update:
+        new_in_stock = new_stock > 0
+        status_changed = new_in_stock != wc_in_stock
+        if status_changed:
+            stats["status"] += 1
+            print(f"    ✏️  STATUS '{sku}' (ID:{product_id}): {wc_in_stock} → {new_in_stock}")
+
+        if price_changed or new_stock != wc_stock or status_changed:
             update_data = {
                 "id":             product_id,
-                "stock_quantity": int(new_stock),
-                "in_stock":       new_in_stock,
                 "manage_stock":   True,
+                "stock_quantity": int(new_stock),
+                # FIX: wc/v3 usa stock_status
+                "stock_status":   "instock" if new_in_stock else "outofstock",
             }
             if price_changed:
                 update_data["regular_price"] = f"{new_price:.2f}"
-
             updates.append(update_data)
 
+    print(
+        f"\n☑️  Mudanças: {stats['preco']} preço | {stats['estoque']} estoque | "
+        f"{stats['status']} status | {stats['zerados']} zerados (não encontrados)"
+    )
     return updates
 
 
 # ─── PASSO 4: Envia atualizações em lote para WooCommerce ───────────────────
-def send_updates_to_woocommerce(updates: list):
-    """
-    Envia as atualizações em lotes de 100 para a API batch da WooCommerce.
-    """
+def send_updates_to_woocommerce(updates: list) -> tuple[int, int]:
     total = len(updates)
+    ok, failed = 0, 0
+    sent_prices = {u["id"]: u["regular_price"] for u in updates if "regular_price" in u}
+
     print("─" * 60)
     print(f"📤 PASSO 4: Enviando {total} atualizações para WooCommerce...")
     print("─" * 60)
@@ -398,12 +395,33 @@ def send_updates_to_woocommerce(updates: list):
                 response = wcapi.post("products/batch", {"update": batch})
 
                 if response.status_code == 200:
-                    print(f"    ✅ Lote {batch_num} enviado com sucesso.")
                     circuit.success()
+                    # FIX: o batch retorna 200 mesmo com erro por item → checa um a um
+                    batch_ok, batch_fail = 0, 0
+                    for item in response.json().get("update", []):
+                        pid = item.get("id")
+                        if "error" in item:
+                            batch_fail += 1
+                            err = item["error"]
+                            print(f"    ❌ ID {pid}: {err.get('code')} — {err.get('message')}")
+                            continue
+                        # Confere se o preço realmente gravou
+                        if pid in sent_prices and item.get("regular_price") != sent_prices[pid]:
+                            batch_fail += 1
+                            print(
+                                f"    ⚠️  ID {pid} (SKU {item.get('sku')}): preço enviado {sent_prices[pid]}, "
+                                f"WC gravou '{item.get('regular_price')}'"
+                            )
+                            continue
+                        batch_ok += 1
+                    ok += batch_ok
+                    failed += batch_fail
+                    print(f"    ✅ Lote {batch_num}: {batch_ok} ok, {batch_fail} com problema.")
                     break
                 else:
                     wait = BACKOFF_BASE ** attempt
                     print(f"    ❌ Erro {response.status_code} no lote {batch_num}. Tentativa {attempt}/{MAX_RETRIES}. Aguardando {wait}s...")
+                    print(f"       {response.text[:300]}")
                     circuit.fail(f"Batch HTTP {response.status_code}")
                     time.sleep(wait)
 
@@ -421,39 +439,57 @@ def send_updates_to_woocommerce(updates: list):
 
             except requests.exceptions.RequestException as e:
                 print(f"    ❌ Erro inesperado lote {batch_num}: {e}. Pulando lote.")
+                failed += len(batch)
                 break
 
         time.sleep(1)
 
+    return ok, failed
+
 
 # ─── Execução Principal ───────────────────────────────────────────────────────
 def main():
-    print("\n🚀 Iniciando sincronização EUTEC ↔ Agis\n")
+    print(f"\n🚀 Iniciando sincronização EUTEC ↔ Agis{' (DRY RUN — nada será gravado)' if DRY_RUN else ''}\n")
 
-    # Passo 1: pega produtos da EUTEC
     df_wc = get_eutec_products()
     if df_wc.empty:
         print("⚠️  Nenhum produto com gerenciamento de estoque na EUTEC. Encerrando.")
         return
 
-    # Passo 2: busca SOMENTE os SKUs da EUTEC na Agis
     skus_eutec = df_wc["sku"].dropna().unique().tolist()
     agis_data = get_agis_data_for_skus(skus_eutec)
 
-    # Passo 3: compara e monta atualizações
+    # Trava de sanidade: Agis em manutenção devolvendo items[] vazio
+    ratio = len(agis_data) / max(len(skus_eutec), 1)
+    if ratio < MIN_FOUND_RATIO:
+        print(
+            f"\n🔴 TRAVA DE SANIDADE: Agis devolveu só {len(agis_data)} de {len(skus_eutec)} SKUs "
+            f"({ratio:.1%} < {MIN_FOUND_RATIO:.0%}).\n"
+            f"   Provável manutenção de catálogo. Abortando SEM zerar estoque."
+        )
+        sys.exit(3)
+
     updates = build_update_payload(df_wc, agis_data)
 
     if not updates:
         print("\n✅ Nenhuma atualização necessária. Tudo sincronizado!")
         return
 
-    # Passo 4: envia para WooCommerce
-    send_updates_to_woocommerce(updates)
+    if DRY_RUN:
+        print(f"\n🧪 DRY RUN: {len(updates)} atualizações seriam enviadas. Nada foi gravado.")
+        return
+
+    ok, failed = send_updates_to_woocommerce(updates)
 
     print("\n✅ Sincronização concluída!")
     print(f"   Produtos EUTEC:          {len(df_wc)}")
     print(f"   Encontrados na Agis:     {len(agis_data)}")
     print(f"   Atualizações enviadas:   {len(updates)}")
+    print(f"   Gravadas com sucesso:    {ok}")
+    print(f"   Com problema:            {failed}")
+
+    if failed:
+        sys.exit(4)  # marca o job do GitHub Actions como falho para você ver
 
 
 if __name__ == "__main__":
