@@ -33,6 +33,8 @@ WC_PAGE_DELAY        = 0.3    # Delay entre páginas da WooCommerce
 AGIS_BATCH_DELAY     = 3.0    # Delay entre lotes de SKUs enviados à Agis
 AGIS_SKU_BATCH_SIZE  = 50     # Quantidade de SKUs por requisição à Agis
 MARGIN_DIVISOR       = 0.96   # Margem do Acyr: preço_agis / 0.96
+PRICE_ADDON_LIMIT    = 3000.0 # Produtos com preço final (após /0.96) <= este valor...
+PRICE_ADDON_VALUE    = 50.0   # ...recebem este acréscimo em R$
 WAREHOUSES           = ["007", "004"]  # Armazéns considerados, em ORDEM DE PRIORIDADE de preço
 MIN_FOUND_RATIO      = 0.05   # Trava de sanidade: aborta se a Agis devolver < 5% dos SKUs
 DRY_RUN              = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
@@ -146,6 +148,20 @@ def to_int(value) -> int:
         return int(float(value or 0))
     except (ValueError, TypeError):
         return 0
+
+
+# ─── Regra de preço ──────────────────────────────────────────────────────────
+def calc_final_price(agis_price: float) -> float:
+    """
+    preço_agis / MARGIN_DIVISOR e, se o resultado ficar <= PRICE_ADDON_LIMIT,
+    soma PRICE_ADDON_VALUE. Preço 0 continua 0 (não gera preço de R$ 50).
+    """
+    if agis_price <= 0:
+        return 0.0
+    final = round(agis_price / MARGIN_DIVISOR, 2)
+    if final <= PRICE_ADDON_LIMIT:
+        final = round(final + PRICE_ADDON_VALUE, 2)
+    return final
 
 
 # ─── PASSO 1: Busca produtos da EUTEC (WooCommerce) ─────────────────────────
@@ -288,12 +304,13 @@ def get_agis_data_for_skus(skus: list[str]) -> dict:
                     continue
 
                 qty, price = extract_agis_stock_price(item)
-                final_price = round(price / MARGIN_DIVISOR, 2) if price > 0 else 0.0
+                final_price = calc_final_price(price)
                 result[sku] = {"agis_price": final_price, "agis_stock": qty, "agis_raw_price": price}
                 found += 1
 
                 if sku in WATCH_SKUS:
-                    print(f"    👀 WATCH {sku}: stock={item.get('stock')} → qty={qty}, preço={price} → final={final_price}")
+                    addon = " (+R$ acréscimo)" if 0 < round(price / MARGIN_DIVISOR, 2) <= PRICE_ADDON_LIMIT else ""
+                    print(f"    👀 WATCH {sku}: stock={item.get('stock')} → qty={qty}, preço={price} → final={final_price}{addon}")
 
             print(f"    ✅ Lote {batch_num}/{len(batches)}: {found}/{len(batch)} SKUs encontrados na Agis.")
 
@@ -450,6 +467,7 @@ def send_updates_to_woocommerce(updates: list) -> tuple[int, int]:
 # ─── Execução Principal ───────────────────────────────────────────────────────
 def main():
     print(f"\n🚀 Iniciando sincronização EUTEC ↔ Agis{' (DRY RUN — nada será gravado)' if DRY_RUN else ''}\n")
+    print(f"💲 Regra de preço: Agis / {MARGIN_DIVISOR} | +R${PRICE_ADDON_VALUE:.2f} se final <= R${PRICE_ADDON_LIMIT:.2f}\n")
 
     df_wc = get_eutec_products()
     if df_wc.empty:
